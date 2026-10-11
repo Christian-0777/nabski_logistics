@@ -11,6 +11,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$StatusPath,
 
+    [string[]]$SteamLibraryRoots,
+
     [switch]$RemoveManagedPlugin
 )
 
@@ -18,10 +20,6 @@ $ErrorActionPreference = 'Stop'
 $expectedHashes = @{
     'win_x64' = '4F1A1DD5B879773161C23D657249775D60C9AA362CED171D74C74A16F1AB0F0A'
     'win_x86' = '01E5D1CD6AF7C239A7B9E80E9911DE447FC8E80F66EE8F415D859A89F4A403BF'
-}
-$sources = @{
-    'win_x64' = (Resolve-Path -LiteralPath $DllPath64 -ErrorAction Stop).Path
-    'win_x86' = (Resolve-Path -LiteralPath $DllPath32 -ErrorAction Stop).Path
 }
 $statusDirectory = Split-Path -Parent $StatusPath
 $manifestDirectory = Split-Path -Parent $ManifestPath
@@ -33,7 +31,63 @@ function Write-Status([string]$Message) {
     Add-Content -LiteralPath $StatusPath -Value $line -Encoding UTF8
 }
 
+function Get-PeMachine([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $reader = [System.IO.BinaryReader]::new($stream)
+        if ($reader.ReadUInt16() -ne 0x5A4D) {
+            throw "Plugin is not a Windows PE file: $Path"
+        }
+        $stream.Position = 0x3C
+        $peOffset = $reader.ReadUInt32()
+        if ($peOffset -gt ($stream.Length - 6)) {
+            throw "Plugin has a truncated PE header: $Path"
+        }
+        $stream.Position = $peOffset
+        if ([System.Text.Encoding]::ASCII.GetString($reader.ReadBytes(4)) -ne "PE`0`0") {
+            throw "Plugin has an invalid PE signature: $Path"
+        }
+        return $reader.ReadUInt16()
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
+try {
+    $sources = @{
+        'win_x64' = (Resolve-Path -LiteralPath $DllPath64 -ErrorAction Stop).Path
+        'win_x86' = (Resolve-Path -LiteralPath $DllPath32 -ErrorAction Stop).Path
+    }
+}
+catch {
+    $message = "TruckSim GPS source DLL is missing or inaccessible. $($_.Exception.Message)"
+    Write-Status "Install: failed. $message"
+    throw $message
+}
+$expectedMachines = @{ win_x64 = 0x8664; win_x86 = 0x014C }
+foreach ($architecture in @('win_x64', 'win_x86')) {
+    try {
+        $source_machine = Get-PeMachine $sources[$architecture]
+    }
+    catch {
+        $message = "Could not read the TruckSim GPS $architecture PE header. $($_.Exception.Message)"
+        Write-Status "Install: failed. $message"
+        throw $message
+    }
+    if ($source_machine -ne $expectedMachines[$architecture]) {
+        $message = "TruckSim GPS $architecture plugin source has the wrong PE architecture: $($sources[$architecture])"
+        Write-Status "Install: failed. $message"
+        throw $message
+    }
+}
+
 function Get-SteamLibraries {
+    if ($SteamLibraryRoots -and $SteamLibraryRoots.Count -gt 0) {
+        return @($SteamLibraryRoots | Where-Object {
+            Test-Path -LiteralPath $_ -PathType Container
+        } | ForEach-Object { [System.IO.Path]::GetFullPath($_) })
+    }
     $roots = [System.Collections.Generic.HashSet[string]]::new(
         [System.StringComparer]::OrdinalIgnoreCase)
     foreach ($candidate in @(
@@ -97,9 +151,18 @@ foreach ($library in $libraries) {
 }
 
 foreach ($architecture in @('win_x64', 'win_x86')) {
-    $actualHash = (Get-FileHash -LiteralPath $sources[$architecture] -Algorithm SHA256).Hash
+    try {
+        $actualHash = (Get-FileHash -LiteralPath $sources[$architecture] -Algorithm SHA256).Hash
+    }
+    catch {
+        $message = "Could not calculate TruckSim GPS $architecture source SHA-256. $($_.Exception.Message)"
+        Write-Status "Install: failed. $message"
+        throw $message
+    }
     if ($actualHash -ine $expectedHashes[$architecture]) {
-        throw "TruckSim GPS $architecture plugin hash mismatch: expected $($expectedHashes[$architecture]), got $actualHash."
+        $message = "TruckSim GPS $architecture plugin hash mismatch: expected $($expectedHashes[$architecture]), got $actualHash."
+        Write-Status "Install: failed. $message"
+        throw $message
     }
 }
 
@@ -108,6 +171,7 @@ if ($RemoveManagedPlugin) {
         Write-Status 'Uninstall: no managed TruckSim GPS plugin copies were recorded.'
         exit 0
     }
+    $uninstallFailures = [System.Collections.Generic.List[string]]::new()
     $managed = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
     foreach ($entry in $managed.PSObject.Properties) {
         $destination = [System.IO.Path]::GetFullPath($entry.Name)
@@ -129,8 +193,13 @@ if ($RemoveManagedPlugin) {
             Write-Status "Uninstall: removed managed plugin: $destination"
         }
         catch {
-            Write-Status "Uninstall: could not remove $destination; close the game and remove it manually if desired. $($_.Exception.Message)"
+            $message = "Uninstall: could not remove $destination; close ETS2/ATS and retry. $($_.Exception.Message)"
+            $uninstallFailures.Add($message)
+            Write-Status $message
         }
+    }
+    if ($uninstallFailures.Count -gt 0) {
+        throw "TruckSim GPS plugin uninstall failed for $($uninstallFailures.Count) destination(s); see $StatusPath."
     }
     exit 0
 }
@@ -209,7 +278,7 @@ foreach ($library in $libraries) {
                     }
                 }
                 $installedHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash
-                if ($installedHash -ine $sourceHash) {
+                if (($installedHash -ine $sourceHash) -or ((Get-PeMachine $destination) -ne $expectedMachines[$architecture])) {
                     throw "Installed plugin hash did not match the verified source: $destination"
                 }
                 $managedHashes[$destination] = $installedHash

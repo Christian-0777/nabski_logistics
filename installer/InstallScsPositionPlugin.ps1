@@ -25,6 +25,29 @@ function Get-FullPath([string]$Path) {
     return [System.IO.Path]::GetFullPath($Path)
 }
 
+function Get-PeMachine([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $reader = [System.IO.BinaryReader]::new($stream)
+        if ($reader.ReadUInt16() -ne 0x5A4D) {
+            throw "Plugin is not a Windows PE file: $Path"
+        }
+        $stream.Position = 0x3C
+        $peOffset = $reader.ReadUInt32()
+        if ($peOffset -gt ($stream.Length - 6)) {
+            throw "Plugin has a truncated PE header: $Path"
+        }
+        $stream.Position = $peOffset
+        if ([System.Text.Encoding]::ASCII.GetString($reader.ReadBytes(4)) -ne "PE`0`0") {
+            throw "Plugin has an invalid PE signature: $Path"
+        }
+        return $reader.ReadUInt16()
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
 function Test-ManagedDestination([string]$Path) {
     $fullPath = Get-FullPath $Path
     return $fullPath -match '(?i)\\steamapps\\common\\(Euro Truck Simulator 2|American Truck Simulator)\\bin\\win_(x64|x86)\\plugins\\nlsi\.dll$'
@@ -160,16 +183,46 @@ if ($RestoreManagedPlugin) {
 }
 
 if (-not $DllPath64 -or -not $DllPath32) {
-    throw 'Both x64 and x86 SCS position plugin source paths are required for installation.'
+    $message = 'Both x64 and x86 SCS position plugin source paths are required for installation.'
+    Write-Status "Install: failed. $message"
+    throw $message
 }
-$sources = @{
-    win_x64 = (Resolve-Path -LiteralPath $DllPath64 -ErrorAction Stop).Path
-    win_x86 = (Resolve-Path -LiteralPath $DllPath32 -ErrorAction Stop).Path
+try {
+    $sources = @{
+        win_x64 = (Resolve-Path -LiteralPath $DllPath64 -ErrorAction Stop).Path
+        win_x86 = (Resolve-Path -LiteralPath $DllPath32 -ErrorAction Stop).Path
+    }
 }
+catch {
+    $message = "SCS position plugin source DLL is missing or inaccessible. $($_.Exception.Message)"
+    Write-Status "Install: failed. $message"
+    throw $message
+}
+$expectedMachines = @{ win_x64 = 0x8664; win_x86 = 0x014C }
 $sourceHashes = @{}
 foreach ($architecture in @('win_x64', 'win_x86')) {
-    $sourceHashes[$architecture] =
-        (Get-FileHash -LiteralPath $sources[$architecture] -Algorithm SHA256).Hash
+    try {
+        $source_machine = Get-PeMachine $sources[$architecture]
+    }
+    catch {
+        $message = "Could not read the SCS position plugin $architecture PE header. $($_.Exception.Message)"
+        Write-Status "Install: failed. $message"
+        throw $message
+    }
+    if ($source_machine -ne $expectedMachines[$architecture]) {
+        $message = "SCS position plugin source has the wrong PE architecture: $($sources[$architecture])"
+        Write-Status "Install: failed. $message"
+        throw $message
+    }
+    try {
+        $sourceHashes[$architecture] =
+            (Get-FileHash -LiteralPath $sources[$architecture] -Algorithm SHA256).Hash
+    }
+    catch {
+        $message = "Could not calculate the SCS position plugin source hash. $($_.Exception.Message)"
+        Write-Status "Install: failed. $message"
+        throw $message
+    }
 }
 New-Item -ItemType Directory -Path $BackupDirectory -Force | Out-Null
 
@@ -269,6 +322,10 @@ foreach ($candidate in $destinations) {
         } else {
             [System.IO.File]::Move($temporary, $destination)
         }
+    } catch {
+        $message = "Install: failed to replace $architecture SCS position plugin at $destination. Close ETS2/ATS and retry. $($_.Exception.Message)"
+        Write-Status $message
+        throw $message
     } finally {
         if (Test-Path -LiteralPath $temporary -PathType Leaf) {
             Remove-Item -LiteralPath $temporary -Force
@@ -279,7 +336,7 @@ foreach ($candidate in $destinations) {
     }
 
     $installedHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash
-    if ($installedHash -ine $sourceHash) {
+    if (($installedHash -ine $sourceHash) -or ((Get-PeMachine $destination) -ne $expectedMachines[$architecture])) {
         throw "Installed SCS position plugin did not match its source: $destination"
     }
     $newEntry = [pscustomobject]@{

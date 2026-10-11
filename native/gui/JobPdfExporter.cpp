@@ -96,13 +96,16 @@ QString DetailsHtml(const QJsonObject& details) {
         for (const QString& key : QString::fromLatin1(field.keys).split(QLatin1Char('|'))) {
             value = details.value(key);
             if (key.contains(QLatin1Char('.'))) {
-                const QStringList path = key.split(QLatin1Char('.'));
-                value = details.value(path.front());
-                for (qsizetype i = 1; i < path.size() && value.isObject(); ++i) {
-                    value = value.toObject().value(path[i]);
+                if (value.isUndefined()) {
+                    const QStringList path = key.split(QLatin1Char('.'));
+                    value = details.value(path.front());
+                    for (qsizetype i = 1; i < path.size() && value.isObject(); ++i) {
+                        value = value.toObject().value(path[i]);
+                    }
                 }
             }
-            if (!value.isUndefined() && !value.isNull()) {
+            if (!value.isUndefined() && !value.isNull()
+                && (!value.isString() || !value.toString().trimmed().isEmpty())) {
                 break;
             }
         }

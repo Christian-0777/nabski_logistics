@@ -3,17 +3,17 @@
 #define AppChannel "beta"
 #endif
 #ifndef AppFileVersion
-#define AppFileVersion 1.5.3.0
+#define AppFileVersion 1.5.4.0
 #endif
 #ifndef ReleaseLabel
-#define ReleaseLabel "1.5.3-beta"
+#define ReleaseLabel "1.5.4-beta"
 #endif
 #define DefaultApplicationDir "C:\Program Files\NLSI Exclusive Logbook"
 #ifndef ReleaseTag
-#define ReleaseTag "v1.5.3-beta"
+#define ReleaseTag "v1.5.4-beta"
 #endif
 #ifndef ReleasePayload
-#define ReleasePayload "build\intermediate\installer-payload-v1.5.3-beta"
+#define ReleasePayload "build\intermediate\installer-payload-v1.5.4-beta"
 #endif
 #define AppPublisher "Nabski Logistics and Solutions Inc."
 #define AppURL "https://github.com/Christian-0777/nlsi_telemetry"
@@ -62,6 +62,7 @@ CloseApplications=yes
 RestartApplications=no
 VersionInfoVersion={#AppFileVersion}
 VersionInfoProductVersion={#AppFileVersion}
+VersionInfoTextVersion={#ReleaseLabel}
 VersionInfoCompany=Nabski Logistics and Solutions Inc.
 VersionInfoProductName={#AppName}
 
@@ -91,16 +92,10 @@ Name: "{userstartup}\NLSI Exclusive Logbook"; Filename: "{app}\NLSI-Exclusive-Lo
 [Run]
 Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing the Microsoft Visual C++ x64 runtime..."; Flags: runhidden waituntilterminated
 Filename: "{tmp}\vc_redist.x86.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing the Microsoft Visual C++ x86 runtime..."; Flags: runhidden waituntilterminated
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\InstallTruckSimPlugin.ps1"" -DllPath64 ""{app}\plugins\trucksim\win_x64\plugins\trucksim-gps-telemetry.dll"" -DllPath32 ""{app}\plugins\trucksim\win_x86\plugins\trucksim-gps-telemetry.dll"" -ManifestPath ""{app}\tools\installed-trucksim-plugins.json"" -StatusPath ""{app}\logs\trucksim-plugin-status.txt"""; WorkingDir: "{app}"; Flags: runhidden waituntilterminated
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\InstallScsPositionPlugin.ps1"" -DllPath64 ""{app}\plugins\scs-position\win_x64\nlsi.dll"" -DllPath32 ""{app}\plugins\scs-position\win_x86\nlsi.dll"" -ManifestPath ""{app}\tools\installed-scs-position-plugins.json"" -BackupDirectory ""{app}\plugin-backups\scs-position"" -StatusPath ""{app}\logs\scs-position-plugin-status.txt"""; WorkingDir: "{app}"; Flags: runhidden waituntilterminated
 Filename: "{app}\NLSI-Exclusive-Logbook.exe"; Description: "Launch NLSI Exclusive Logbook"; Flags: postinstall nowait skipifsilent unchecked
 Filename: "https://www.tiktok.com/@nabskiplays"; Description: "Follow the CEO on TikTok"; Flags: postinstall shellexec nowait skipifsilent unchecked
 Filename: "https://discord.gg/gmQAGf6g9"; Description: "Join the developer Discord (xtian-tools)"; Flags: postinstall shellexec nowait skipifsilent unchecked
 Filename: "https://github.com/Christian-0777/nlsi_telemetry/releases/tag/{#ReleaseTag}"; Description: "View release notes"; Flags: postinstall shellexec nowait skipifsilent unchecked
-[UninstallRun]
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\InstallTruckSimPlugin.ps1"" -DllPath64 ""{app}\plugins\trucksim\win_x64\plugins\trucksim-gps-telemetry.dll"" -DllPath32 ""{app}\plugins\trucksim\win_x86\plugins\trucksim-gps-telemetry.dll"" -ManifestPath ""{app}\tools\installed-trucksim-plugins.json"" -StatusPath ""{app}\logs\trucksim-plugin-status.txt"" -RemoveManagedPlugin"; WorkingDir: "{app}"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveManagedTruckSimPlugin"
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\InstallScsPositionPlugin.ps1"" -ManifestPath ""{app}\tools\installed-scs-position-plugins.json"" -BackupDirectory ""{app}\plugin-backups\scs-position"" -StatusPath ""{app}\logs\scs-position-plugin-status.txt"" -RestoreManagedPlugin"; WorkingDir: "{app}"; Flags: runhidden waituntilterminated; RunOnceId: "RestoreManagedScsPositionPlugin"
-
 [Code]
 const
   UninstallRegistryKey =
@@ -118,6 +113,75 @@ var
   ExistingInstallDetected: Boolean;
   ExistingInstallRecovery: Boolean;
   ExistingInstallError: String;
+
+function RunPowerShellScript(const ScriptName, Arguments: String): Boolean;
+var
+  ExitCode: Integer;
+  ScriptPath: String;
+begin
+  ScriptPath := ExpandConstant('{app}\tools\' + ScriptName);
+  Result := Exec(
+    ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -ExecutionPolicy Bypass -File "' + ScriptPath + '" ' + Arguments,
+    ExpandConstant('{app}'),
+    SW_HIDE,
+    ewWaitUntilTerminated,
+    ExitCode);
+  if Result then
+    Result := ExitCode = 0;
+  if not Result then
+    MsgBox(
+      'Could not complete ' + ScriptName + '. The installer will not continue. ' +
+      'Review the plugin status log in the application directory.',
+      mbError,
+      MB_OK);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  TruckSimArguments: String;
+  ScsArguments: String;
+begin
+  if CurStep = ssPostInstall then begin
+    TruckSimArguments :=
+      '-DllPath64 "' + ExpandConstant('{app}\plugins\trucksim\win_x64\plugins\trucksim-gps-telemetry.dll') +
+      '" -DllPath32 "' + ExpandConstant('{app}\plugins\trucksim\win_x86\plugins\trucksim-gps-telemetry.dll') +
+      '" -ManifestPath "' + ExpandConstant('{app}\tools\installed-trucksim-plugins.json') +
+      '" -StatusPath "' + ExpandConstant('{app}\logs\trucksim-plugin-status.txt') + '"';
+    if not RunPowerShellScript('InstallTruckSimPlugin.ps1', TruckSimArguments) then
+      RaiseException('TruckSim GPS plugin installation failed.');
+
+    ScsArguments :=
+      '-DllPath64 "' + ExpandConstant('{app}\plugins\scs-position\win_x64\nlsi.dll') +
+      '" -DllPath32 "' + ExpandConstant('{app}\plugins\scs-position\win_x86\nlsi.dll') +
+      '" -ManifestPath "' + ExpandConstant('{app}\tools\installed-scs-position-plugins.json') +
+      '" -BackupDirectory "' + ExpandConstant('{app}\plugin-backups\scs-position') +
+      '" -StatusPath "' + ExpandConstant('{app}\logs\scs-position-plugin-status.txt') + '"';
+    if not RunPowerShellScript('InstallScsPositionPlugin.ps1', ScsArguments) then
+      RaiseException('SCS position plugin installation failed.');
+  end;
+end;
+
+function InitializeUninstall(): Boolean;
+var
+  TruckSimArguments: String;
+  ScsArguments: String;
+begin
+  TruckSimArguments :=
+    '-DllPath64 "' + ExpandConstant('{app}\plugins\trucksim\win_x64\plugins\trucksim-gps-telemetry.dll') +
+    '" -DllPath32 "' + ExpandConstant('{app}\plugins\trucksim\win_x86\plugins\trucksim-gps-telemetry.dll') +
+    '" -ManifestPath "' + ExpandConstant('{app}\tools\installed-trucksim-plugins.json') +
+    '" -StatusPath "' + ExpandConstant('{app}\logs\trucksim-plugin-status.txt') +
+    '" -RemoveManagedPlugin';
+  ScsArguments :=
+    '-ManifestPath "' + ExpandConstant('{app}\tools\installed-scs-position-plugins.json') +
+    '" -BackupDirectory "' + ExpandConstant('{app}\plugin-backups\scs-position') +
+    '" -StatusPath "' + ExpandConstant('{app}\logs\scs-position-plugin-status.txt') +
+    '" -RestoreManagedPlugin';
+  Result := RunPowerShellScript('InstallTruckSimPlugin.ps1', TruckSimArguments);
+  if Result then
+    Result := RunPowerShellScript('InstallScsPositionPlugin.ps1', ScsArguments);
+end;
 
 function QueryUninstallValue(const ValueName: String; var Value: String): Boolean;
 begin

@@ -1,6 +1,6 @@
 # Telemetry mapping and availability
 
-## Native Qt application v1.5.2 Beta
+## Native Qt application v1.5.3 Beta
 
 The native app reads the official TruckSim GPS plugin's 32 KiB `Local\TSGPSTelemetry` map (revision 13) directly; it does not use the separate TruckSim GPS Telemetry Server. It also reads NLSI SCS SDK configuration and gameplay events from the versioned IPC provided by `nlsi.dll`, and accepts legacy NLSI UDP telemetry when available. Fresh live values are merged only when provider game identities match; missing or stale preferred values may be filled from fresh matching data, while conflicting game identities are not merged. Per-record timestamps and provider names are retained in local logs.
 
@@ -31,7 +31,7 @@ coordinates, account identity, game version, or authenticated-user session.
 |---|---|---|---|---|---|---|---|
 | SDK active (0) | bool | SDK/plugin active flag | `session_active` | Slot present; true/false | Source sample timestamp | Yes, bool | Raw bool + validity |
 | Paused (4) | bool | Game pause flag | `paused`; `driving` is derived | Slot present; true/false | Source sample timestamp | Yes, bool | Raw bool + validity |
-| Sample timestamp (8) | uint64 | Plugin-defined counter; unit not established here | Provider freshness metadata | Zero means no valid sample timestamp | Source counter, serialized as decimal text | Diagnostics only | Raw timestamp + validity |
+| Sample timestamp (8) | uint64 | Plugin-defined counter; unit not established here | Provider freshness metadata | Zero rejects the sample before decoding | Source counter, serialized as decimal text | Diagnostics only | Raw timestamp + validity |
 | Simulation timestamp (16) | uint64 | Plugin-defined simulation counter; unit not established here | None | Slot present; zero retained | Same source sample | Diagnostics only | Raw timestamp |
 | Render timestamp (24) | uint64 | Plugin-defined render counter; unit not established here | None | Slot present; zero retained | Same source sample | Diagnostics only | Raw timestamp |
 | Plugin revision (40) | uint32 | Revision number | Provider metadata | Must equal 13 to decode | Static per map revision | Yes, status only | Raw revision |

@@ -1,3 +1,40 @@
+# NLSI Exclusive Logbook v1.5.4-beta
+
+This beta release hardens completed-job history, independent SDK/GPS provider
+handling, parking-brake display recovery, and managed game-plugin replacement.
+It preserves the existing Qt application architecture, history formats,
+branding, and per-user data location.
+
+## What's changed
+
+- Normalizes available job fields from provider event data and supported
+  identity metadata. Blank or invalid values do not erase valid values; numeric
+  zero and boolean false remain valid. Correlated provider events update one
+  completed-job record while preserving raw telemetry provenance.
+- Keeps SDK and GPS connectivity/freshness independent so a stale GPS source
+  alone does not end an otherwise supported session. Rejects invalid timestamp
+  and shared-memory input before accepting a sample.
+- Displays the parking-brake `P` marker only for a fresh confirmed engaged
+  sample; service-brake telemetry is restored when released or unknown.
+- Verifies plugin architecture and SHA-256, replaces unchanged managed DLLs
+  using an atomic replacement path, records failures, and preserves unrelated
+  plugin copies and per-user application data.
+- Keeps the TikTok and Discord post-install links unchecked by default.
+
+## Requirements and limitations
+
+- Automated validation on the Windows build host passed: 57 Python tests,
+  focused temporary-layout installer tests, both native Release CTest targets,
+  x64/x86 plugin builds, and setup compilation with embedded beta file-version
+  metadata.
+- A full execution of the compiled installer for fresh installation or upgrade
+  was not performed. ETS2/ATS gameplay is **NOT RUN — USER WILL TEST**.
+
+Expected installer:
+`build/releases/v1.5.4-beta/NLSI-Exclusive-Logbook-v1.5.4-beta-Setup.exe`.
+
+---
+
 # NLSI Exclusive Logbook v1.5.3-beta
 
 This beta adds SDK-backed vehicle fuel and parking-brake telemetry, presentation

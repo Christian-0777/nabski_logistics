@@ -6,6 +6,8 @@
 #include <QRegularExpression>
 #include <QTimeZone>
 
+#include <chrono>
+
 namespace nlsi::time {
 
 inline constexpr char kZoneId[] = "Asia/Manila";
@@ -41,6 +43,19 @@ inline QDateTime ParseInstant(const QString& value) {
     return timestamp.isValid() && zone.isValid()
         ? timestamp.toTimeZone(zone)
         : QDateTime{};
+}
+
+inline bool IsTimestampWithinWindow(
+    const QString& value,
+    const QDateTime& now_utc,
+    std::chrono::milliseconds max_age,
+    std::chrono::milliseconds max_future_skew) {
+    const QDateTime timestamp = ParseInstant(value);
+    if (!timestamp.isValid() || !now_utc.isValid()) {
+        return false;
+    }
+    const qint64 delta_ms = now_utc.toUTC().msecsTo(timestamp.toUTC());
+    return delta_ms >= -max_age.count() && delta_ms <= max_future_skew.count();
 }
 
 inline QString UtcTimestampNow() {

@@ -368,28 +368,28 @@ void DashboardPage::UpdateState(const telemetry::TelemetryUiState& state) {
     SetValue(QStringLiteral("brake"), PercentValue(snapshot.effective_brake));
     const bool parking_brake_confirmed =
         snapshot.parking_brake.available && !snapshot.parking_brake.stale;
+    const bool parking_brake_engaged =
+        parking_brake_confirmed && snapshot.parking_brake.value;
     for (auto it = parking_brake_indicators_.begin();
          it != parking_brake_indicators_.end(); ++it) {
         QLabel* indicator = it.value();
-        if (!parking_brake_confirmed) {
-            indicator->setText(QStringLiteral("?"));
-            indicator->setAccessibleName(QStringLiteral("Parking brake state unknown"));
-            indicator->setStyleSheet(
-                QStringLiteral("color:#a9a3ad;background:#37323b;border-radius:10px;"));
-        } else if (snapshot.parking_brake.value) {
+        indicator->setVisible(parking_brake_engaged);
+        if (parking_brake_engaged) {
             indicator->setText(QStringLiteral("P"));
             indicator->setAccessibleName(QStringLiteral("Parking brake engaged"));
             indicator->setStyleSheet(
                 QStringLiteral("color:#ffffff;background:#b63d50;border-radius:10px;"));
         } else {
-            indicator->setText(QStringLiteral("P"));
-            indicator->setAccessibleName(QStringLiteral("Parking brake released"));
-            indicator->setStyleSheet(
-                QStringLiteral("color:#aaa4ad;background:#37323b;border-radius:10px;"));
+            indicator->setText(QString());
+            indicator->setAccessibleName(parking_brake_confirmed
+                ? QStringLiteral("Parking brake released")
+                : QStringLiteral("Parking brake state unknown"));
+            indicator->setStyleSheet(QString());
         }
     }
     SetValue(QStringLiteral("retarder"), NumberValue(snapshot.retarder_level, 1));
-    values_.value(QStringLiteral("brake"))->setVisible(!cruise_control_active);
+    values_.value(QStringLiteral("brake"))->setVisible(
+        !cruise_control_active && !parking_brake_engaged);
     values_.value(QStringLiteral("retarder"))->setVisible(!cruise_control_active);
     SetValue(QStringLiteral("cruiseControl"),
         cruise_control_confirmed

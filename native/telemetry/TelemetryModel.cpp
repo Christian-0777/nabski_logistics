@@ -4,6 +4,34 @@
 
 namespace nlsi::telemetry {
 
+SessionLifecycleAction DetermineSessionLifecycleAction(
+    bool session_is_open,
+    bool telemetry_indicates_active,
+    bool telemetry_confirms_inactive,
+    bool explicit_gameplay_end) {
+    if (explicit_gameplay_end) {
+        return session_is_open
+            ? SessionLifecycleAction::End : SessionLifecycleAction::None;
+    }
+    if (!session_is_open && telemetry_indicates_active) {
+        return SessionLifecycleAction::Start;
+    }
+    if (session_is_open && telemetry_confirms_inactive) {
+        return SessionLifecycleAction::End;
+    }
+    return SessionLifecycleAction::None;
+}
+
+bool HasActiveSessionEvidence(
+    bool primary_provider_connected,
+    const TelemetryField<bool>& primary_session_active,
+    bool scs_sdk_connected,
+    bool scs_game_known) {
+    return (primary_provider_connected && primary_session_active.available
+            && !primary_session_active.stale && primary_session_active.value)
+        || (scs_sdk_connected && scs_game_known);
+}
+
 double MetersToKilometers(double meters) {
     return meters / 1000.0;
 }

@@ -1367,10 +1367,13 @@ bool TestLowFuelWarningAndParkingBrakeStates() {
     page.UpdateState(state);
 
     QLabel* fuel = FindDashboardField(page, QStringLiteral("fuel"));
+    QLabel* brake = FindDashboardField(page, QStringLiteral("brake"));
     QLabel* parking = page.findChild<QLabel*>(QStringLiteral("parkingBrakeIndicator"));
-    if (!fuel || !parking || !fuel->font().underline()
+    if (!fuel || !brake || !parking || !fuel->font().underline()
         || !fuel->styleSheet().contains(QStringLiteral("#f05b68"))
         || parking->text() != QStringLiteral("P")
+        || parking->isHidden()
+        || !brake->isHidden()
         || parking->accessibleName() != QStringLiteral("Parking brake engaged")
         || !parking->styleSheet().contains(QStringLiteral("#b63d50"))
         || fuel->text().contains(QLatin1Char('%'))) {
@@ -1382,8 +1385,10 @@ bool TestLowFuelWarningAndParkingBrakeStates() {
     snapshot.parking_brake.Set(false, L"SCS SDK channel", L"sample");
     page.UpdateState(state);
     if (fuel->font().underline() || !fuel->styleSheet().isEmpty()
+        || !parking->isHidden()
+        || brake->isHidden()
         || parking->accessibleName() != QStringLiteral("Parking brake released")
-        || parking->styleSheet().contains(QStringLiteral("#b63d50"))) {
+        || !parking->text().isEmpty()) {
         std::cerr << "Fuel warning did not clear above 20 percent or parking-brake OFF was wrong.\n";
         return false;
     }
@@ -1392,7 +1397,8 @@ bool TestLowFuelWarningAndParkingBrakeStates() {
     snapshot.parking_brake.MarkStale();
     page.UpdateState(state);
     if (!fuel->font().underline()
-        || parking->text() != QStringLiteral("?")
+        || !parking->isHidden()
+        || brake->isHidden()
         || parking->accessibleName() != QStringLiteral("Parking brake state unknown")) {
         std::cerr << "Below-threshold fuel or stale parking-brake state was not handled safely.\n";
         return false;
@@ -1402,9 +1408,26 @@ bool TestLowFuelWarningAndParkingBrakeStates() {
     snapshot.parking_brake = {};
     page.UpdateState(state);
     if (fuel->font().underline()
-        || parking->text() != QStringLiteral("?")
-        || !parking->styleSheet().contains(QStringLiteral("#37323b"))) {
+        || !parking->isHidden()
+        || brake->isHidden()
+        || !parking->styleSheet().isEmpty()
+        || parking->accessibleName() != QStringLiteral("Parking brake state unknown")) {
         std::cerr << "Invalid capacity or missing parking telemetry was treated as confirmed.\n";
+        return false;
+    }
+
+    snapshot.parking_brake.Set(true, L"SCS SDK channel", L"recovered");
+    page.UpdateState(state);
+    if (parking->text() != QStringLiteral("P")
+        || parking->isHidden() || !brake->isHidden()) {
+        std::cerr << "A fresh engaged parking-brake sample did not recover the P indicator.\n";
+        return false;
+    }
+    snapshot.parking_brake.Set(false, L"SCS SDK channel", L"released");
+    page.UpdateState(state);
+    if (!parking->isHidden() || brake->isHidden()
+        || brake->text() != QStringLiteral("10.0%")) {
+        std::cerr << "Parking-brake release did not restore the service-brake value immediately.\n";
         return false;
     }
     return true;
@@ -1458,7 +1481,7 @@ bool TestMeasurementUnitConversionsAndSettings() {
     nlsi::gui::SetMeasurementSystem(nlsi::gui::MeasurementSystem::Metric);
     nlsi::telemetry::TelemetryCore telemetry_core;
     nlsi::gui::MainWindow window(
-        L"NLSI Exclusive Logbook", L"v1.5.3-beta", telemetry_core);
+        L"NLSI Exclusive Logbook", L"v1.5.4-beta", telemetry_core);
     QComboBox* selector = window.findChild<QComboBox*>(
         QStringLiteral("measurementSystemSelector"));
     if (!selector || selector->count() != 2
@@ -1834,7 +1857,7 @@ bool TestSingleInstanceGuard(QApplication& application) {
 
 bool TestOfflineUpdateCheck() {
     nlsi::updater::GitHubUpdater updater(
-        QStringLiteral("1.5.3-beta"),
+        QStringLiteral("1.5.4-beta"),
         nullptr,
         QUrl(QStringLiteral("http://127.0.0.1:1/releases")));
     QEventLoop loop;
@@ -1882,7 +1905,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     application.setStyleSheet(QString::fromUtf8(stylesheet.readAll()));
-    application.setApplicationVersion(QStringLiteral("v1.5.3-beta"));
+    application.setApplicationVersion(QStringLiteral("v1.5.4-beta"));
     if (!TestModLogParsingAndSourceLinks()
         || !TestIncrementalGameLogMonitoring()
         || !TestMonitorStartsBeforeGame()
@@ -1901,7 +1924,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     nlsi::telemetry::TelemetryCore telemetry_core;
-    nlsi::gui::MainWindow window(L"NLSI Exclusive Logbook", L"v1.5.3-beta",
+    nlsi::gui::MainWindow window(L"NLSI Exclusive Logbook", L"v1.5.4-beta",
         telemetry_core);
 
     if (window.size() != QSize(900, 600) ||
@@ -2034,7 +2057,7 @@ int main(int argc, char** argv) {
         found_company = found_company
             || label->text() == QStringLiteral("Nabski Logistics and Solutions Inc.");
         found_version = found_version
-            || label->text() == QStringLiteral("v1.5.3-beta");
+            || label->text() == QStringLiteral("v1.5.4-beta");
         found_beta_channel = found_beta_channel
             || label->text() == QStringLiteral("Beta");
         if (label->text() == QStringLiteral("PRODUCT") && label->parentWidget()) {

@@ -248,6 +248,10 @@ bool TelemetryCore::Initialize(const std::wstring& user_data_directory) {
         trucksim_state_ = ProviderState::Connecting;
         nlsi_state_ = ProviderState::Connecting;
         scs_configuration_game_id_ = 0;
+        scs_sdk_last_sample_monotonic_ = {};
+        status_.scs_sdk = ProviderState::Disconnected;
+        status_.scs_sdk_error = L"Waiting for valid SCS SDK telemetry.";
+        status_.scs_sdk_last_seen.clear();
         logged_trucksim_message_.clear();
         job_fuel_tracker_ = {};
         if (!user_data_directory.empty()) {
@@ -345,6 +349,9 @@ void TelemetryCore::BeginShutdown() {
         }
         trucksim_state_ = ProviderState::Disconnected;
         nlsi_state_ = ProviderState::Disconnected;
+        status_.scs_sdk = ProviderState::Disconnected;
+        status_.scs_sdk_error.clear();
+        scs_sdk_last_sample_monotonic_ = {};
         status_.trucksim = trucksim_state_;
         status_.nlsi = nlsi_state_;
         scs_position_snapshot_ = {};
@@ -575,12 +582,29 @@ void TelemetryCore::OnProviderEvent(const std::string& packet_bytes) {
     const QString packet_type = packet.value(QStringLiteral("type")).toString();
     const QString timestamp = packet.value(QStringLiteral("timestamp")).toString();
     QJsonObject details = packet.value(QStringLiteral("data")).toObject();
+    const QString provider = packet.value(QStringLiteral("provider")).toString();
+    if (packet_type == QStringLiteral("plugin_shutdown")) {
+        if (!nlsi::time::IsTimestampWithinWindow(
+                timestamp, QDateTime::currentDateTimeUtc(),
+                std::chrono::minutes(5), std::chrono::seconds(5))) {
+            status_.last_error = L"Rejected an SCS plugin shutdown event with an invalid or stale timestamp.";
+            return;
+        }
+        if (DetermineSessionLifecycleAction(
+                session_manager_.IsActive(), false, false, true)
+            == SessionLifecycleAction::End) {
+            EndSessionLocked(
+                L"game_plugin_shutdown",
+                timestamp.isEmpty() ? UtcNow() : timestamp.toStdWString());
+        }
+    }
     if (packet_type == QStringLiteral("configuration")
-        && packet.value(QStringLiteral("provider")).toString() == QStringLiteral("SCS SDK")) {
+        && provider == QStringLiteral("SCS SDK")) {
         const QDateTime parsed_timestamp =
             nlsi::time::ParseInstant(timestamp);
         const int game_id = packet.value(QStringLiteral("game_id")).toInt();
-        if (!parsed_timestamp.isValid() || parsed_timestamp > QDateTime::currentDateTimeUtc().addSecs(60)
+        if (!parsed_timestamp.isValid()
+            || parsed_timestamp > QDateTime::currentDateTimeUtc().addSecs(5)
             || (game_id != providers::kScsPositionGameEts2
                 && game_id != providers::kScsPositionGameAts)) {
             status_.last_error = L"Rejected an invalid or uncorrelated SCS configuration update.";
@@ -682,18 +706,26 @@ void TelemetryCore::OnProviderEvent(const std::string& packet_bytes) {
     }
 
     if (packet_type == QStringLiteral("vehicle_telemetry")
-        && packet.value(QStringLiteral("provider")).toString()
-            == QStringLiteral("SCS SDK")) {
-        const QDateTime parsed_timestamp = nlsi::time::ParseInstant(timestamp);
+        && provider == QStringLiteral("SCS SDK")) {
         const int game_id = packet.value(QStringLiteral("game_id")).toInt();
-        if (!parsed_timestamp.isValid()
-            || parsed_timestamp > QDateTime::currentDateTimeUtc().addSecs(60)
+        if (!packet.value(QStringLiteral("data")).isObject()) {
+            status_.last_error =
+                L"Rejected an SCS vehicle telemetry sample without an object payload.";
+            return;
+        }
+        if (!nlsi::time::IsTimestampWithinWindow(
+                timestamp, QDateTime::currentDateTimeUtc(),
+                std::chrono::seconds(5), std::chrono::seconds(5))
             || (game_id != static_cast<int>(providers::kScsPositionGameEts2)
                 && game_id != static_cast<int>(providers::kScsPositionGameAts))) {
             status_.last_error =
                 L"Rejected an invalid or uncorrelated SCS vehicle telemetry sample.";
             return;
         }
+        scs_sdk_last_sample_monotonic_ = std::chrono::steady_clock::now();
+        status_.scs_sdk_last_seen = timestamp.toStdWString();
+        status_.scs_sdk = ProviderState::Connected;
+        status_.scs_sdk_error.clear();
         if (scs_configuration_game_id_ != 0
             && scs_configuration_game_id_ != static_cast<std::uint32_t>(game_id)) {
             scs_configuration_snapshot_ = {};
@@ -718,6 +750,15 @@ void TelemetryCore::OnProviderEvent(const std::string& packet_bytes) {
                 parking_brake.toBool(), L"SCS SDK channel", timestamp.toStdWString());
         }
         RebuildStateLocked();
+        return;
+    }
+
+    if ((event_type == QStringLiteral("job.delivered")
+            || event_type == QStringLiteral("job.cancelled"))
+        && !nlsi::time::IsTimestampWithinWindow(
+            timestamp, QDateTime::currentDateTimeUtc(),
+            std::chrono::minutes(5), std::chrono::seconds(5))) {
+        status_.last_error = L"Rejected a completed-job event with an invalid or stale timestamp.";
         return;
     }
 
@@ -781,7 +822,8 @@ void TelemetryCore::OnProviderEvent(const std::string& packet_bytes) {
         || event_type == QStringLiteral("job.cancelled")) {
         if (history_store_) {
             const std::uint64_t previous_revision = history_store_->Snapshot().revision;
-            persisted = history_store_->RecordJob(ui_state_.job, event_type, timestamp, details)
+            persisted = history_store_->RecordJob(
+                ui_state_.job, event_type, timestamp, details, provider)
                 && persisted;
             const session::HistorySnapshot updated_history = history_store_->Snapshot();
             if (persisted && updated_history.revision != previous_revision) {
@@ -878,16 +920,13 @@ void TelemetryCore::OnScsPositionUpdate(
     if (IsShuttingDownLocked()) {
         return;
     }
-    if (snapshot.state == providers::ScsPositionState::Disconnected
-        && scs_position_snapshot_.state != providers::ScsPositionState::Disconnected) {
-        scs_configuration_snapshot_ = {};
-        scs_configuration_game_id_ = 0;
-    }
     scs_position_snapshot_ = snapshot;
+    UpdateScsSdkHealthLocked();
     RebuildStateLocked();
 }
 
 void TelemetryCore::RebuildStateLocked() {
+    UpdateScsSdkHealthLocked();
     if (telemetry_recorder_) {
         const std::wstring recorder_error = telemetry_recorder_->LastError();
         if (!recorder_error.empty()) {
@@ -896,6 +935,7 @@ void TelemetryCore::RebuildStateLocked() {
     }
     const bool trucksim_connected = trucksim_state_ == ProviderState::Connected;
     const bool nlsi_connected = nlsi_state_ == ProviderState::Connected;
+    const bool scs_sdk_connected = status_.scs_sdk == ProviderState::Connected;
     snapshot_ = trucksim_connected || !nlsi_connected
         ? trucksim_snapshot_ : nlsi_snapshot_;
     snapshot_.connected = trucksim_connected || nlsi_connected;
@@ -949,11 +989,7 @@ void TelemetryCore::RebuildStateLocked() {
         ? QStringLiteral("ets2")
         : (scs_configuration_game_id_ == providers::kScsPositionGameAts
             ? QStringLiteral("ats") : QString());
-    const bool scs_position_matches_configuration =
-        scs_position_snapshot_.state == providers::ScsPositionState::Connected
-        && scs_position_snapshot_.available
-        && scs_position_snapshot_.game_id == scs_configuration_game_id_;
-    if (!scs_game_id.isEmpty() && scs_position_matches_configuration
+    if (!scs_game_id.isEmpty()
         && (current_game_id.isEmpty() || current_game_id == scs_game_id)) {
         if (!scs_configuration_snapshot_.game_id.available) {
             scs_configuration_snapshot_.game_id.Set(
@@ -981,7 +1017,7 @@ void TelemetryCore::RebuildStateLocked() {
     status_.nlsi = nlsi_state_;
     status_.combined = snapshot_.connected
         ? CombinedProviderState::Connected
-        : (nlsi_connected ? CombinedProviderState::Partial
+        : (nlsi_connected || scs_sdk_connected ? CombinedProviderState::Partial
                           : CombinedProviderState::Disconnected);
     status_.telemetry_freshness = snapshot_.timestamp.empty()
         ? L"No telemetry sample received"
@@ -998,14 +1034,36 @@ void TelemetryCore::RebuildStateLocked() {
 }
 
 void TelemetryCore::UpdateSessionLifecycleLocked() {
-    const bool active = snapshot_.connected
+    const bool sdk_game_known =
+        scs_configuration_game_id_ == providers::kScsPositionGameEts2
+        || scs_configuration_game_id_ == providers::kScsPositionGameAts;
+    const bool snapshot_active = snapshot_.connected
         && snapshot_.session_active.available
+        && !snapshot_.session_active.stale
         && snapshot_.session_active.value;
-    if (active && !session_manager_.IsActive()) {
-        const std::wstring timestamp = snapshot_.timestamp.empty() ? UtcNow() : snapshot_.timestamp;
+    const bool active = HasActiveSessionEvidence(
+        snapshot_.connected, snapshot_.session_active,
+        status_.scs_sdk == ProviderState::Connected, sdk_game_known);
+    const bool explicitly_inactive = snapshot_.connected
+        && snapshot_.session_active.available
+        && !snapshot_.session_active.stale
+        && !snapshot_.session_active.value;
+    const SessionLifecycleAction action = DetermineSessionLifecycleAction(
+        session_manager_.IsActive(), active, explicitly_inactive, false);
+    if (action == SessionLifecycleAction::Start) {
+        const std::wstring timestamp = snapshot_active && !snapshot_.timestamp.empty()
+            ? snapshot_.timestamp
+            : (!status_.scs_sdk_last_seen.empty()
+                ? status_.scs_sdk_last_seen : UtcNow());
+        const std::wstring sdk_game = scs_configuration_game_id_
+                == providers::kScsPositionGameEts2
+            ? L"ets2"
+            : (scs_configuration_game_id_ == providers::kScsPositionGameAts
+                ? L"ats" : L"");
         const std::wstring game = snapshot_.game_id.available
             ? snapshot_.game_id.value
-            : (snapshot_.game_name.available ? snapshot_.game_name.value : L"Unknown");
+            : (snapshot_.game_name.available ? snapshot_.game_name.value
+                : (sdk_game.empty() ? L"Unknown" : sdk_game));
         session_manager_.Start(timestamp, game);
         session_started_monotonic_ = std::chrono::steady_clock::now();
         if (history_store_) {
@@ -1016,11 +1074,29 @@ void TelemetryCore::UpdateSessionLifecycleLocked() {
                 status_.storage_error.clear();
             }
         }
-    } else if (!active && session_manager_.IsActive()) {
-        const std::wstring reason = snapshot_.connected
-            ? L"gameplay_ended"
-            : L"telemetry_lost";
-        EndSessionLocked(reason, snapshot_.timestamp.empty() ? UtcNow() : snapshot_.timestamp);
+    } else if (action == SessionLifecycleAction::End) {
+        EndSessionLocked(
+            L"gameplay_ended",
+            snapshot_.timestamp.empty() ? UtcNow() : snapshot_.timestamp);
+    }
+}
+
+void TelemetryCore::UpdateScsSdkHealthLocked() {
+    if (scs_sdk_last_sample_monotonic_ == std::chrono::steady_clock::time_point{}) {
+        status_.scs_sdk = ProviderState::Disconnected;
+        if (status_.scs_sdk_error.empty()) {
+            status_.scs_sdk_error = L"Waiting for valid SCS SDK telemetry.";
+        }
+        return;
+    }
+    const auto age = std::chrono::steady_clock::now() - scs_sdk_last_sample_monotonic_;
+    if (age >= std::chrono::seconds(5)) {
+        status_.scs_sdk = ProviderState::Stale;
+        status_.scs_sdk_error =
+            L"No valid SCS SDK telemetry sample has been received for five seconds.";
+    } else {
+        status_.scs_sdk = ProviderState::Connected;
+        status_.scs_sdk_error.clear();
     }
 }
 

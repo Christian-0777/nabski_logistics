@@ -67,6 +67,7 @@ private:
     void OnTruckSimSample(const providers::RawTelemetrySample& sample);
     void OnScsPositionUpdate(const providers::ScsPositionSnapshot& snapshot);
     void RebuildStateLocked();
+    void UpdateScsSdkHealthLocked();
     bool IsShuttingDownLocked() const;
     void UpdateSessionLifecycleLocked();
     void EndSessionLocked(const std::wstring& reason, const std::wstring& timestamp);
@@ -87,6 +88,7 @@ private:
     ProviderState nlsi_state_ = ProviderState::Disconnected;
     std::uint32_t scs_configuration_game_id_ = 0;
     std::chrono::steady_clock::time_point session_started_monotonic_;
+    std::chrono::steady_clock::time_point scs_sdk_last_sample_monotonic_;
     std::wstring logged_trucksim_message_;
     bool shutdown_started_ = false;
     std::wstring shutdown_error_;

@@ -14,10 +14,10 @@ SPEC.loader.exec_module(BUILDER)
 
 class NativeReleasePackagingTests(unittest.TestCase):
     def test_version_and_automatic_plugin_installation_policy(self) -> None:
-        self.assertEqual("1.5.3", BUILDER.VERSION)
+        self.assertEqual("1.5.4", BUILDER.VERSION)
         self.assertEqual("beta", BUILDER.CHANNEL)
         self.assertEqual("beta", BUILDER.INSTALL_CHANNEL)
-        self.assertEqual("v1.5.3-beta", BUILDER.RELEASE_TAG)
+        self.assertEqual("v1.5.4-beta", BUILDER.RELEASE_TAG)
         self.assertIn("Qt6Concurrent.dll", BUILDER.REQUIRED_RUNTIME_FILES)
         self.assertEqual(
             r"C:\Program Files\NLSI Exclusive Logbook",
@@ -68,8 +68,8 @@ class NativeReleasePackagingTests(unittest.TestCase):
         self.assertEqual(2, len(BUILDER.SCS_POSITION_PLUGIN_FILES))
         self.assertEqual(
             [
-                ROOT / "build" / "plugins" / "v1.5.3-beta" / "win_x64" / "nlsi.dll",
-                ROOT / "build" / "plugins" / "v1.5.3-beta" / "win_x86" / "nlsi.dll",
+                ROOT / "build" / "plugins" / "v1.5.4-beta" / "win_x64" / "nlsi.dll",
+                ROOT / "build" / "plugins" / "v1.5.4-beta" / "win_x86" / "nlsi.dll",
             ],
             [source for source, _, _ in BUILDER.SCS_POSITION_PLUGIN_FILES],
         )
@@ -96,6 +96,7 @@ class NativeReleasePackagingTests(unittest.TestCase):
         installer_text = (ROOT / "installer" / "NLSI-Exclusive-Logbook.iss").read_text(
             encoding="utf-8"
         )
+        self.assertIn("VersionInfoTextVersion={#ReleaseLabel}", installer_text)
         self.assertIn("InstallScsPositionPlugin.ps1", installer_text)
         self.assertIn("-RestoreManagedPlugin", installer_text)
         for url, description in (

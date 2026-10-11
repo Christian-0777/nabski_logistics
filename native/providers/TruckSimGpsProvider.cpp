@@ -369,6 +369,10 @@ bool TruckSimGpsProvider::DecodeRevision13(
         error = output.str();
         return false;
     }
+    if (ReadValue<std::uint64_t>(data, kTimestampOffset) == 0) {
+        error = L"TruckSim GPS sample timestamp is zero; the mapping was not decoded.";
+        return false;
+    }
 
     const std::wstring timestamp = UtcNow();
     snapshot = {};

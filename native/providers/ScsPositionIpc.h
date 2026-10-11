@@ -77,6 +77,10 @@ inline bool DecodeScsPositionMapping(
         error = L"Position mapping identifies an unsupported game.";
         return false;
     }
+    if (sample.timestamp_ms == 0) {
+        error = L"Position mapping timestamp is zero.";
+        return false;
+    }
     if (!std::isfinite(sample.x) || !std::isfinite(sample.y)
         || !std::isfinite(sample.z)) {
         error = L"Position sample contains non-finite coordinates.";

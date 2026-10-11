@@ -154,6 +154,34 @@ void TestMissingAndInvalidFields() {
         && snapshot.trailer.available && snapshot.trailer_plate.value == L"TR 2",
         "stationary configuration values were not populated from available provider data");
 
+    const std::string empty_and_zero_packet = R"json({
+      "type":"telemetry","timestamp":"2026-10-07T08:36:46.000Z",
+      "state":"driving",
+      "truck":{"fuel_liters":0,"retarder_level":0,"parking_brake":false},
+      "configurations":{"job":{
+        "job_id":"job-zero",
+        "cargo":"   ",
+        "source_city":"",
+        "income":0,
+        "planned_distance_km":0,
+        "loaded":false,
+        "special_job":false
+      }}
+    })json";
+    Check(nlsi::providers::NLSIProvider::ParseTelemetryPacket(
+            empty_and_zero_packet, snapshot),
+        "packet with empty strings and valid zero/false values was rejected");
+    Check(snapshot.cargo_id.available && snapshot.cargo_id.value == L"job-zero"
+        && !snapshot.cargo_name.available && !snapshot.source_city.available
+        && snapshot.income.available && snapshot.income.value == L"0"
+        && snapshot.planned_distance.available && snapshot.planned_distance.value == L"0"
+        && snapshot.loaded.available && !snapshot.loaded.value
+        && snapshot.special_job.available && snapshot.special_job.value == L"false"
+        && snapshot.fuel_liters.available && snapshot.fuel_liters.value == 0.0
+        && snapshot.retarder_level.available && snapshot.retarder_level.value == 0.0
+        && snapshot.parking_brake.available && !snapshot.parking_brake.value,
+        "empty strings were marked available or valid zero/false fields were lost");
+
     std::wstring error;
     Check(!nlsi::providers::NLSIProvider::ParseTelemetryPacket(
         R"json({"type":"telemetry","state":"driving","truck":{}})json", snapshot, &error),
@@ -246,6 +274,12 @@ void TestTruckSimGpsRevision13LayoutAndUnits() {
         && raw_sample.source_fields.value(QStringLiteral("cruise_control_speed_mps")).toDouble() == 20.0
         && raw_sample.source_availability.value(QStringLiteral("speed_mps")).toBool(),
         "raw TruckSim values, source timestamps, availability, or full mapping bytes were not retained");
+    put(8, std::uint64_t{0});
+    Check(!nlsi::providers::TruckSimGpsProvider::DecodeRevision13(
+            bytes.data(), bytes.size(), snapshot, decoded_revision, error)
+        && error.find(L"zero") != std::wstring::npos,
+        "zero TruckSim GPS timestamp was accepted");
+    put(8, std::uint64_t{101});
     Check(snapshot.has_job.available && snapshot.has_job.value
         && snapshot.loaded.value && snapshot.cargo_id.value == L"job-17"
         && snapshot.cargo_name.value == L"Furniture"
@@ -272,6 +306,43 @@ void TestTruckSimGpsRevision13LayoutAndUnits() {
             bytes.data(), 1024, snapshot, decoded_revision, error)
         && !error.empty(),
         "undersized TruckSim GPS shared-memory view was accepted");
+}
+
+void TestSessionLifecycleActions() {
+    using nlsi::telemetry::DetermineSessionLifecycleAction;
+    using nlsi::telemetry::SessionLifecycleAction;
+    Check(DetermineSessionLifecycleAction(false, true, false, false)
+            == SessionLifecycleAction::Start,
+        "active telemetry did not start a session");
+    Check(DetermineSessionLifecycleAction(true, false, false, false)
+            == SessionLifecycleAction::None,
+        "provider interruption ended an open session");
+    Check(DetermineSessionLifecycleAction(true, false, true, false)
+            == SessionLifecycleAction::End,
+        "fresh explicit inactive telemetry did not end an open session");
+    Check(DetermineSessionLifecycleAction(true, false, false, true)
+            == SessionLifecycleAction::End,
+        "explicit plugin shutdown did not end an open session");
+    Check(DetermineSessionLifecycleAction(false, false, false, true)
+            == SessionLifecycleAction::None,
+        "plugin shutdown created a duplicate session end");
+
+    nlsi::telemetry::TelemetryField<bool> inactive;
+    inactive.Set(false, L"TruckSim GPS", L"sample");
+    Check(nlsi::telemetry::HasActiveSessionEvidence(false, inactive, true, true)
+        && nlsi::telemetry::DetermineSessionLifecycleAction(
+            false, nlsi::telemetry::HasActiveSessionEvidence(false, inactive, true, true),
+            false, false) == SessionLifecycleAction::Start,
+        "valid SCS SDK telemetry did not provide independent active-session evidence");
+    Check(nlsi::telemetry::HasActiveSessionEvidence(false, inactive, true, true)
+        && DetermineSessionLifecycleAction(
+            true, nlsi::telemetry::HasActiveSessionEvidence(false, inactive, true, true),
+            false, false) == SessionLifecycleAction::None,
+        "GPS disconnection while the SCS SDK remained healthy ended or duplicated the session");
+    Check(!nlsi::telemetry::HasActiveSessionEvidence(false, inactive, false, true)
+        && DetermineSessionLifecycleAction(
+            true, false, false, false) == SessionLifecycleAction::None,
+        "loss of both providers was treated as explicit gameplay inactivity");
 }
 
 void TestThrottleBrakeCruiseAndJobParsing() {
@@ -492,6 +563,29 @@ void TestScsPositionIpcDecodingAndFreshness() {
             bytes.data(), bytes.size(), 14001, frame, error)
         && frame.stale && frame.age_ms == 4001,
         "old SCS position IPC data was not marked stale");
+    sample.timestamp_ms = 0;
+    std::memcpy(bytes.data(), &sample, sizeof(sample));
+    Check(!DecodeScsPositionMapping(bytes.data(), bytes.size(), 12000, frame, error)
+        && error.find(L"timestamp is zero") != std::wstring::npos,
+        "zero SCS position IPC timestamp was accepted");
+    sample.timestamp_ms = 10000;
+    sample.timestamp_ms = 12001;
+    std::memcpy(bytes.data(), &sample, sizeof(sample));
+    Check(!DecodeScsPositionMapping(bytes.data(), bytes.size(), 12000, frame, error)
+        && error.find(L"future") != std::wstring::npos,
+        "future SCS position IPC timestamp was accepted");
+    sample.timestamp_ms = 10000;
+    sample.struct_size = kScsPositionIpcSize + 1;
+    std::memcpy(bytes.data(), &sample, sizeof(sample));
+    Check(!DecodeScsPositionMapping(bytes.data(), bytes.size(), 12000, frame, error),
+        "unsupported SCS position IPC payload size was accepted");
+    sample.struct_size = kScsPositionIpcSize;
+    sample.x = std::numeric_limits<double>::quiet_NaN();
+    std::memcpy(bytes.data(), &sample, sizeof(sample));
+    Check(!DecodeScsPositionMapping(bytes.data(), bytes.size(), 12000, frame, error),
+        "non-finite SCS position coordinates were accepted");
+    sample.x = -1234.5;
+    std::memcpy(bytes.data(), &sample, sizeof(sample));
     Check(!DecodeScsPositionMapping(nullptr, 0, 12000, frame, error)
         && error.find(L"missing or truncated") != std::wstring::npos,
         "missing SCS position plugin data was not reported");
@@ -827,6 +921,16 @@ void TestHistoryAndTxtLogPersistence() {
         && !snapshot.jobs.front().details.contains(QStringLiteral("driven_distance_km"))
         && !snapshot.jobs.front().details.contains(QStringLiteral("truck")),
         "completed job snapshot fields were not persisted or unavailable data was fabricated");
+    QFile persisted_jobs(QDir(root).filePath(QStringLiteral("session_logs/jobs.jsonl")));
+    Check(persisted_jobs.open(QIODevice::ReadOnly | QIODevice::Text),
+        "normalized completed-job JSONL was not created");
+    const QList<QByteArray> persisted_job_lines =
+        persisted_jobs.readAll().trimmed().split('\n');
+    persisted_jobs.close();
+    Check(persisted_job_lines.size() == 1
+        && QJsonDocument::fromJson(persisted_job_lines.front()).object()
+                .value(QStringLiteral("source_event_keys")).toArray().size() == 2,
+        "correlated provider updates did not persist as one completed-job record");
     const QString session_log = QDir(root).filePath(QStringLiteral("session_logs/session-test.txt"));
     QFile session_file(session_log);
     Check(session_file.open(QIODevice::ReadOnly | QIODevice::Text),
@@ -862,12 +966,14 @@ void TestHistoryAndTxtLogPersistence() {
     Check(reloaded_history.Snapshot().jobs.front().nlsi_job_id
             == snapshot.jobs.front().nlsi_job_id,
         "the generated NLSI job ID did not survive a reload");
-    Check(reloaded_history.RecordJob(
-            job,
-            QStringLiteral("job.delivered"),
-            QStringLiteral("2026-10-07T08:29:03.000Z"),
-            {{QStringLiteral("job_id"), QStringLiteral("job-test")}}),
-        "persisted duplicate job event could not be handled");
+    const bool persisted_duplicate_handled = reloaded_history.RecordJob(
+        job,
+        QStringLiteral("job.delivered"),
+        QStringLiteral("2026-10-07T08:29:03.000Z"),
+        {{QStringLiteral("job_id"), QStringLiteral("job-test")}});
+    Check(persisted_duplicate_handled,
+        qPrintable(QStringLiteral("persisted duplicate job event could not be handled: %1")
+            .arg(reloaded_history.Snapshot().error)));
     Check(reloaded_history.Snapshot().jobs.size() == 1,
         "a duplicate completed-job event was recorded after reloading history");
 
@@ -1442,6 +1548,21 @@ void TestAsiaManilaTimeZone() {
     Check(!ParseInstant(QStringLiteral("2026-10-07T16:30:00.000")).isValid()
         && !ParseInstant(QStringLiteral("not-a-time")).isValid(),
         "missing-zone or invalid timestamps were silently reinterpreted");
+    const QDateTime now = QDateTime::fromString(
+        QStringLiteral("2026-10-07T16:30:00.000Z"), Qt::ISODateWithMs);
+    Check(nlsi::time::IsTimestampWithinWindow(
+            QStringLiteral("2026-10-07T16:29:55.000Z"), now,
+            std::chrono::seconds(5), std::chrono::seconds(5))
+        && !nlsi::time::IsTimestampWithinWindow(
+            QStringLiteral("2026-10-07T16:29:54.999Z"), now,
+            std::chrono::seconds(5), std::chrono::seconds(5))
+        && !nlsi::time::IsTimestampWithinWindow(
+            QStringLiteral("2026-10-07T16:30:05.001Z"), now,
+            std::chrono::seconds(5), std::chrono::seconds(5))
+        && !nlsi::time::IsTimestampWithinWindow(
+            QStringLiteral("not-a-time"), now,
+            std::chrono::seconds(5), std::chrono::seconds(5)),
+        "provider timestamp age/future bounds accepted stale, future, or invalid samples");
 }
 
 void TestCompletedJobsLoadFromTelemetryHistory() {
@@ -1471,6 +1592,148 @@ void TestCompletedJobsLoadFromTelemetryHistory() {
         && jobs.front().source == QStringLiteral("Berlin")
         && jobs.front().destination == QStringLiteral("Paris"),
         "completed-job history was not reconstructed or duplicate telemetry was not suppressed");
+}
+
+void TestCrossProviderCompletedJobCorrelationAndValuePreservation() {
+    QTemporaryDir root;
+    Check(root.isValid(), "cross-provider completed-job fixture directory could not be created");
+    const QString telemetry_path = QDir(root.path()).filePath(
+        QStringLiteral("logs/telemetry/2026-10-07.nlsi"));
+    Check(QDir().mkpath(QFileInfo(telemetry_path).absolutePath()),
+        "cross-provider telemetry directory could not be created");
+    const auto provider_event = [](const QString& provider,
+                                   const QString& timestamp,
+                                   const QJsonObject& data) {
+        return QJsonObject{
+            {QStringLiteral("timestamp_utc"), timestamp},
+            {QStringLiteral("provider"), provider},
+            {QStringLiteral("record_type"), QStringLiteral("provider_event")},
+            {QStringLiteral("event"), QStringLiteral("job.delivered")},
+            {QStringLiteral("data"), data},
+        };
+    };
+    const QJsonObject sdk_data{
+        {QStringLiteral("job_id"), QStringLiteral("shared-job-17")},
+        {QStringLiteral("cargo"), QString()},
+        {QStringLiteral("source_city"), QString()},
+        {QStringLiteral("destination_city"), QString()},
+        {QStringLiteral("income"), QString()},
+        {QStringLiteral("revenue"), 0},
+        {QStringLiteral("distance.km"), 624.5},
+        {QStringLiteral("delivery.time"), 95},
+        {QStringLiteral("earned.xp"), 48},
+        {QStringLiteral("cargo.damage"), 0},
+        {QStringLiteral("special_job"), false},
+        {QStringLiteral("loaded"), false},
+        {QStringLiteral("identity"), QJsonObject{
+            {QStringLiteral("cargo"), QStringLiteral("Furniture")},
+            {QStringLiteral("origin"), QJsonObject{
+                {QStringLiteral("city"), QStringLiteral("Berlin")},
+                {QStringLiteral("company"), QStringLiteral("Berlin Logistics")}}},
+            {QStringLiteral("destination"), QJsonObject{
+                {QStringLiteral("city"), QStringLiteral("Paris")},
+                {QStringLiteral("company"), QStringLiteral("Paris Freight")}}},
+        }},
+    };
+    const QJsonObject gps_data{
+        {QStringLiteral("cargo_id"), QStringLiteral("shared-job-17")},
+        {QStringLiteral("cargo"), QString()},
+        {QStringLiteral("source_city"), QString()},
+        {QStringLiteral("source_company"), QString()},
+        {QStringLiteral("destination_city"), QString()},
+        {QStringLiteral("destination_company"), QString()},
+        {QStringLiteral("market"), QString()},
+        {QStringLiteral("income"), QString()},
+        {QStringLiteral("event_key"), QJsonObject{
+            {QStringLiteral("cargo"), QStringLiteral("Furniture")},
+            {QStringLiteral("origin"), QJsonObject{
+                {QStringLiteral("city"), QStringLiteral("Berlin")},
+                {QStringLiteral("company"), QStringLiteral("Berlin Logistics")}}},
+            {QStringLiteral("destination"), QJsonObject{
+                {QStringLiteral("city"), QStringLiteral("Paris")},
+                {QStringLiteral("company"), QStringLiteral("Paris Freight")}}},
+        }},
+    };
+    const QJsonObject conflicting_data{
+        {QStringLiteral("job_id"), QStringLiteral("shared-job-18")},
+        {QStringLiteral("cargo_id"), QStringLiteral("shared-job-17")},
+        {QStringLiteral("cargo"), QStringLiteral("Furniture")},
+        {QStringLiteral("source_city"), QStringLiteral("Berlin")},
+        {QStringLiteral("destination_city"), QStringLiteral("Lyon")},
+    };
+    const QJsonObject later_delivery_data{
+        {QStringLiteral("cargo_id"), QStringLiteral("shared-job-17")},
+        {QStringLiteral("cargo"), QStringLiteral("Furniture")},
+        {QStringLiteral("source_city"), QStringLiteral("Berlin")},
+        {QStringLiteral("destination_city"), QStringLiteral("Paris")},
+    };
+    const QJsonObject unknown_job_data{
+        {QStringLiteral("job_id"), QStringLiteral("unknown-job")},
+        {QStringLiteral("cargo"), QStringLiteral("   ")},
+    };
+    const QList<QJsonObject> events{
+        provider_event(QStringLiteral("SCS SDK"),
+            QStringLiteral("2026-10-07T08:29:00.000Z"), sdk_data),
+        provider_event(QStringLiteral("TruckSim GPS"),
+            QStringLiteral("2026-10-07T08:29:01.000Z"), gps_data),
+        provider_event(QStringLiteral("TruckSim GPS"),
+            QStringLiteral("2026-10-07T08:29:02.000Z"), conflicting_data),
+        provider_event(QStringLiteral("TruckSim GPS"),
+            QStringLiteral("2026-10-07T08:30:00.000Z"), later_delivery_data),
+        provider_event(QStringLiteral("SCS SDK"),
+            QStringLiteral("2026-10-07T08:31:00.000Z"), unknown_job_data),
+    };
+    QByteArray raw_records;
+    for (const QJsonObject& event : events) {
+        raw_records += QJsonDocument(event).toJson(QJsonDocument::Compact) + '\n';
+    }
+    QFile telemetry_file(telemetry_path);
+    Check(telemetry_file.open(QIODevice::WriteOnly | QIODevice::Text)
+        && telemetry_file.write(raw_records) == raw_records.size(),
+        "cross-provider raw telemetry could not be persisted");
+    telemetry_file.close();
+
+    nlsi::logging::Logger logger(
+        QDir(root.path()).filePath(QStringLiteral("logs/application.txt")).toStdWString());
+    nlsi::session::HistoryStore history(logger);
+    Check(history.Initialize(root.path()), "cross-provider completed jobs could not be loaded");
+    const auto jobs = history.Snapshot().jobs;
+    Check(jobs.size() == 4,
+        "provider deliveries were not correlated conservatively by identity, time, and route");
+
+    const auto correlated = std::find_if(jobs.cbegin(), jobs.cend(), [](const auto& job) {
+        return job.identity == QStringLiteral("shared-job-17")
+            && job.timestamp == QStringLiteral("2026-10-07T08:29:00.000Z");
+    });
+    Check(correlated != jobs.cend()
+        && correlated->cargo == QStringLiteral("Furniture")
+        && correlated->source == QStringLiteral("Berlin Logistics · Berlin")
+        && correlated->destination == QStringLiteral("Paris Freight · Paris")
+        && correlated->details.value(QStringLiteral("income")).toDouble(-1.0) == 0.0
+        && correlated->details.value(QStringLiteral("loaded")).isBool()
+        && !correlated->details.value(QStringLiteral("loaded")).toBool()
+        && correlated->details.value(QStringLiteral("driven_distance_km")).toDouble() == 624.5
+        && correlated->details.value(QStringLiteral("delivery_time_game_minutes")).toDouble() == 95.0
+        && correlated->details.value(QStringLiteral("xp")).toDouble() == 48.0
+        && correlated->details.value(QStringLiteral("damage")).toDouble() == 0.0
+        && correlated->details.value(QStringLiteral("special_job")).isBool()
+        && !correlated->details.value(QStringLiteral("special_job")).toBool()
+        && correlated->details.value(QStringLiteral("source_company")).toString()
+            == QStringLiteral("Berlin Logistics"),
+        "empty provider values overwrote valid job fields or zero/false values were lost");
+
+    const auto unknown = std::find_if(jobs.cbegin(), jobs.cend(), [](const auto& job) {
+        return job.identity == QStringLiteral("unknown-job");
+    });
+    Check(unknown != jobs.cend() && unknown->cargo.isEmpty()
+        && unknown->source.isEmpty() && unknown->destination.isEmpty()
+        && unknown->details.value(QStringLiteral("cargo")).toString().trimmed().isEmpty(),
+        "missing job cargo or route was fabricated");
+
+    QFile unchanged_raw_telemetry(telemetry_path);
+    Check(unchanged_raw_telemetry.open(QIODevice::ReadOnly | QIODevice::Text)
+        && unchanged_raw_telemetry.readAll() == raw_records,
+        "job normalization modified or discarded source-provider provenance");
 }
 
 void TestTelemetryRecorderPersistsProviderEventsAndConfiguration() {
@@ -1538,6 +1801,8 @@ int main() {
         {"valid telemetry and units", TestValidTelemetryAndUnits},
         {"missing and invalid fields", TestMissingAndInvalidFields},
         {"TruckSim GPS revision-13 layout and units", TestTruckSimGpsRevision13LayoutAndUnits},
+        {"provider interruption and explicit session lifecycle",
+            TestSessionLifecycleActions},
         {"throttle, brake, cruise, and job parsing", TestThrottleBrakeCruiseAndJobParsing},
         {"paused state and zero-speed ETA", TestPausedStateAndZeroSpeedEta},
         {"stale telemetry", TestStaleTelemetryStopsDriving},
@@ -1556,6 +1821,8 @@ int main() {
         {"offline telemetry queue and interrupted-write recovery", TestTelemetryRecorderOfflineRecovery},
         {"Asia/Manila timestamp conversion", TestAsiaManilaTimeZone},
         {"completed jobs load from telemetry history", TestCompletedJobsLoadFromTelemetryHistory},
+        {"cross-provider completed-job correlation and value preservation",
+            TestCrossProviderCompletedJobCorrelationAndValuePreservation},
         {"provider event and configuration telemetry persistence",
             TestTelemetryRecorderPersistsProviderEventsAndConfiguration},
         {"version comparison", TestVersionComparison},

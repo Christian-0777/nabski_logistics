@@ -4,6 +4,7 @@
 #include <QHash>
 #include <QJsonObject>
 #include <QSet>
+#include <QStringList>
 #include <QVector>
 
 #include <cstdint>
@@ -45,6 +46,7 @@ struct JobRecord {
     QString timestamp;
     QJsonObject details;
     QString nlsi_job_id;
+    QString provider;
 };
 
 struct HistorySnapshot {
@@ -79,7 +81,8 @@ public:
         const telemetry::JobSnapshot& job,
         const QString& event_type,
         const QString& timestamp,
-        const QJsonObject& event_details);
+        const QJsonObject& event_details,
+        const QString& provider = {});
     QString EnsureNlsiJobId(const QString& game_job_identity);
     HistorySnapshot Snapshot() const;
 
@@ -91,6 +94,10 @@ private:
     bool LoadJobs();
     bool LoadTelemetryJobs();
     bool LoadJobIds();
+    bool UpdateJobRecord(
+        const JobRecord& previous,
+        const QJsonObject& replacement,
+        const QStringList& event_keys);
     bool SaveJobIds();
     QString AllocateNlsiJobId();
     bool AppendJsonLine(const QString& path, const QJsonObject& object);

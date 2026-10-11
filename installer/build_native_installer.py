@@ -134,6 +134,21 @@ def verify_installer_policy() -> None:
         raise ValueError("The SCS position plugin installer must back up and track managed copies.")
     if "TSGPSTelemetry" in position_script:
         raise ValueError("The SCS position plugin installer must remain separate from TruckSim GPS.")
+    for name, script in (
+        ("TruckSim GPS", script_text),
+        ("SCS position", position_script),
+    ):
+        if "Get-PeMachine" not in script or "expectedMachines" not in script:
+            raise ValueError(f"The {name} plugin installer must validate PE architecture.")
+        if "Get-FileHash" not in script or "installedHash" not in script:
+            raise ValueError(f"The {name} plugin installer must verify installed SHA-256.")
+    if (
+        "function RunPowerShellScript" not in installer_text
+        or "ExitCode = 0" not in installer_text
+        or "InitializeUninstall(): Boolean" not in installer_text
+        or "RaiseException('SCS position plugin installation failed.')" not in installer_text
+    ):
+        raise ValueError("The installer must detect plugin install/restore failures.")
     required_installer_policy = (
         "DefaultDirName={#DefaultApplicationDir}",
         'DefaultApplicationDir "C:\\Program Files\\NLSI Exclusive Logbook"',
@@ -185,6 +200,29 @@ def verify_executable_version(app_exe: Path) -> None:
         raise ValueError(
             f"The native executable has version metadata {actual!r}; "
             f"expected {expected!r}. Refusing to package a stale executable."
+        )
+
+
+def verify_installer_version(setup_exe: Path) -> None:
+    escaped_path = str(setup_exe).replace("'", "''")
+    command = (
+        f"$version = (Get-Item -LiteralPath '{escaped_path}').VersionInfo; "
+        'Write-Output "$($version.FileVersion)|$($version.ProductVersion)"'
+    )
+    result = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-Command", command],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    expected = (RELEASE_LABEL, FILE_VERSION)
+    actual = tuple(part.strip() for part in result.stdout.strip().split("|"))
+    if actual != expected or RELEASE_TAG not in setup_exe.name:
+        raise ValueError(
+            f"The setup executable has version metadata {'|'.join(actual)!r}; "
+            f"expected {'|'.join(expected)!r} for {RELEASE_LABEL}. Refusing to report a "
+            "successful package build."
         )
 
 
@@ -285,7 +323,7 @@ def copy_runtime_payload(app_exe: Path) -> None:
         ]
         if missing_channels:
             raise ValueError(
-                f"The SCS position plugin does not contain the v1.5.3 telemetry "
+                f"The SCS position plugin does not contain the required telemetry "
                 f"identifiers {', '.join(missing_channels)}: {source}. Refusing to package "
                 "a stale or incorrectly built DLL."
             )
@@ -447,6 +485,7 @@ def compile_installer() -> None:
     )
     if not OUTPUT_EXE.is_file() or OUTPUT_EXE.stat().st_size == 0:
         raise FileNotFoundError(f"Inno Setup did not produce {OUTPUT_EXE}")
+    verify_installer_version(OUTPUT_EXE)
 
 
 def main() -> int:

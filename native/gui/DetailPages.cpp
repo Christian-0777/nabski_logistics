@@ -270,6 +270,9 @@ ProvidersPage::ProvidersPage(QWidget* parent)
     AddField(QStringLiteral("trucksim"), QStringLiteral("TruckSim GPS"));
     AddField(QStringLiteral("nlsi"), QStringLiteral("NLSI SCS telemetry"));
     AddField(QStringLiteral("nlsiError"), QStringLiteral("NLSI provider message"));
+    AddField(QStringLiteral("scsSdk"), QStringLiteral("SCS SDK telemetry"));
+    AddField(QStringLiteral("scsSdkLastSeen"), QStringLiteral("Last SCS SDK sample"));
+    AddField(QStringLiteral("scsSdkError"), QStringLiteral("SCS SDK provider message"));
     AddField(QStringLiteral("scsPosition"), QStringLiteral("SCS position provider"));
     AddField(QStringLiteral("scsPositionMapping"), QStringLiteral("Position interface"));
     AddField(QStringLiteral("scsPositionAge"), QStringLiteral("Position sample age"));
@@ -298,6 +301,15 @@ void ProvidersPage::UpdateState(const telemetry::TelemetryUiState& state) {
         state.providers.nlsi_error.empty()
             ? QStringLiteral("None")
             : QString::fromStdWString(state.providers.nlsi_error));
+    SetValue(QStringLiteral("scsSdk"), StatusText(state.providers.scs_sdk));
+    SetValue(QStringLiteral("scsSdkLastSeen"),
+        state.providers.scs_sdk_last_seen.empty()
+            ? QStringLiteral("Never")
+            : TimestampText(QString::fromStdWString(state.providers.scs_sdk_last_seen)));
+    SetValue(QStringLiteral("scsSdkError"),
+        state.providers.scs_sdk_error.empty()
+            ? QStringLiteral("None")
+            : QString::fromStdWString(state.providers.scs_sdk_error));
     const auto& position = state.scs_position;
     const QString position_status = position.state == providers::ScsPositionState::Connected
         ? QStringLiteral("Connected")

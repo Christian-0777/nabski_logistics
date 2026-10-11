@@ -98,6 +98,7 @@ struct TelemetrySnapshot {
 struct ProviderStatus {
     ProviderState trucksim = ProviderState::Disconnected;
     ProviderState nlsi = ProviderState::Disconnected;
+    ProviderState scs_sdk = ProviderState::Disconnected;
     CombinedProviderState combined = CombinedProviderState::Disconnected;
     std::wstring telemetry_freshness;
     std::wstring last_error;
@@ -111,11 +112,30 @@ struct ProviderStatus {
     std::wstring trucksim_source_timestamp;
     std::wstring trucksim_error;
     std::wstring nlsi_error;
+    std::wstring scs_sdk_error;
+    std::wstring scs_sdk_last_seen;
     std::uint32_t trucksim_revision = 0;
     std::uint32_t trucksim_win32_error = 0;
     bool trucksim_mapping_open = false;
     bool trucksim_view_mapped = false;
 };
+
+enum class SessionLifecycleAction {
+    None,
+    Start,
+    End
+};
+
+SessionLifecycleAction DetermineSessionLifecycleAction(
+    bool session_is_open,
+    bool telemetry_indicates_active,
+    bool telemetry_confirms_inactive,
+    bool explicit_gameplay_end);
+bool HasActiveSessionEvidence(
+    bool primary_provider_connected,
+    const TelemetryField<bool>& primary_session_active,
+    bool scs_sdk_connected,
+    bool scs_game_known);
 
 double MetersToKilometers(double meters);
 std::optional<double> FuelPercentage(

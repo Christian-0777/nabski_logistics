@@ -72,17 +72,28 @@ QString EventFieldText(const QJsonObject& details, const QStringList& keys) {
         for (const QString& key : keys) {
             QJsonValue value = object.value(key);
             if (key.contains(QLatin1Char('.'))) {
-                const QStringList path = key.split(QLatin1Char('.'));
-                value = object.value(path.front());
-                for (qsizetype index = 1; index < path.size() && value.isObject(); ++index) {
-                    value = value.toObject().value(path[index]);
+                if (value.isUndefined()) {
+                    const QStringList path = key.split(QLatin1Char('.'));
+                    value = object.value(path.front());
+                    for (qsizetype index = 1; index < path.size() && value.isObject(); ++index) {
+                        value = value.toObject().value(path[index]);
+                    }
                 }
             }
-            if (value.isString() && !value.toString().trimmed().isEmpty()) {
-                return value.toString().trimmed();
+            if (value.isString()) {
+                const QString text = value.toString().trimmed();
+                if (!text.isEmpty()
+                    && text.compare(QStringLiteral("null"), Qt::CaseInsensitive) != 0
+                    && text.compare(QStringLiteral("undefined"), Qt::CaseInsensitive) != 0
+                    && text.compare(QStringLiteral("n/a"), Qt::CaseInsensitive) != 0) {
+                    return text;
+                }
             }
-            if (value.isDouble()) {
+            if (value.isDouble() && std::isfinite(value.toDouble())) {
                 return value.toVariant().toString();
+            }
+            if (value.isBool()) {
+                return value.toBool() ? QStringLiteral("Yes") : QStringLiteral("No");
             }
         }
         return QString();
@@ -252,7 +263,7 @@ QWidget* MakeCompletedJobCard(const session::JobRecord& job, QWidget* parent) {
     fields->AddField(QStringLiteral("Cargo"),
         job.cargo.isEmpty()
             ? field({QStringLiteral("cargo"), QStringLiteral("cargo_name"),
-                QStringLiteral("cargo.id")})
+                QStringLiteral("cargo.name")})
             : job.cargo);
     fields->AddField(QStringLiteral("Weight"),
         ConvertedUnit(field({QStringLiteral("weight"), QStringLiteral("cargo_weight")}),

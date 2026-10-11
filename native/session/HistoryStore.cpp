@@ -4,6 +4,7 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QCryptographicHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonParseError>
@@ -27,29 +28,374 @@ QString ToQString(const std::wstring& value) {
 }
 
 QString FieldText(const telemetry::TelemetryField<std::wstring>& field) {
-    return field.available && !field.stale ? ToQString(field.value) : QString();
+    if (!field.available || field.stale) {
+        return {};
+    }
+    const QString text = ToQString(field.value).trimmed();
+    return text.compare(QStringLiteral("null"), Qt::CaseInsensitive) == 0
+            || text.compare(QStringLiteral("undefined"), Qt::CaseInsensitive) == 0
+            || text.compare(QStringLiteral("n/a"), Qt::CaseInsensitive) == 0
+        ? QString() : text;
+}
+
+QJsonValue JsonValueAtPath(const QJsonObject& object, const QString& path) {
+    const QJsonValue direct = object.value(path);
+    if (!direct.isUndefined()) {
+        return direct;
+    }
+    QJsonValue value = object;
+    for (const QString& component : path.split(QLatin1Char('.'))) {
+        if (!value.isObject()) {
+            return {};
+        }
+        value = value.toObject().value(component);
+    }
+    return value;
+}
+
+bool IsUsableText(const QString& text) {
+    const QString normalized = text.trimmed();
+    return !normalized.isEmpty()
+        && normalized.compare(QStringLiteral("null"), Qt::CaseInsensitive) != 0
+        && normalized.compare(QStringLiteral("undefined"), Qt::CaseInsensitive) != 0
+        && normalized.compare(QStringLiteral("n/a"), Qt::CaseInsensitive) != 0;
 }
 
 QString EventText(const QJsonObject& object, std::initializer_list<QString> keys) {
     for (const QString& key : keys) {
-        QJsonValue value = object.value(key);
-        if (key.contains(QLatin1Char('.'))) {
-            const QStringList path = key.split(QLatin1Char('.'));
-            value = object.value(path.front());
-            for (qsizetype index = 1; index < path.size() && value.isObject(); ++index) {
-                value = value.toObject().value(path[index]);
-            }
-        }
+        const QJsonValue value = JsonValueAtPath(object, key);
         if (value.isString()) {
             const QString text = value.toString().trimmed();
-            if (!text.isEmpty()) {
+            if (IsUsableText(text)) {
                 return text;
             }
-        } else if (value.isDouble()) {
+        } else if (value.isDouble() && std::isfinite(value.toDouble())) {
             return value.toVariant().toString();
         }
     }
     return {};
+}
+
+QString RouteText(const QString& company, const QString& city) {
+    if (company.isEmpty()) {
+        return city;
+    }
+    if (city.isEmpty() || company == city) {
+        return company;
+    }
+    return company + QStringLiteral(" · ") + city;
+}
+
+bool HasValue(const QJsonValue& value) {
+    if (value.isNull() || value.isUndefined()) {
+        return false;
+    }
+    if (value.isString()) {
+        return IsUsableText(value.toString());
+    }
+    if (value.isDouble()) {
+        return std::isfinite(value.toDouble());
+    }
+    if (value.isObject()) {
+        return !value.toObject().isEmpty();
+    }
+    if (value.isArray()) {
+        return !value.toArray().isEmpty();
+    }
+    return true;
+}
+
+QJsonObject MetadataObject(const QJsonValue& value) {
+    if (value.isObject()) {
+        return value.toObject();
+    }
+    if (!value.isString()) {
+        return {};
+    }
+    const QByteArray encoded = value.toString().trimmed().toUtf8();
+    if (!encoded.startsWith('{')) {
+        return {};
+    }
+    QJsonParseError error;
+    const QJsonDocument document = QJsonDocument::fromJson(encoded, &error);
+    return error.error == QJsonParseError::NoError && document.isObject()
+        ? document.object() : QJsonObject{};
+}
+
+QVector<QJsonObject> JobDetailSources(const QJsonObject& details) {
+    QVector<QJsonObject> sources{details};
+    for (const QString& key : {
+             QStringLiteral("job_snapshot"),
+             QStringLiteral("job_configuration"),
+             QStringLiteral("identity"),
+             QStringLiteral("event_key")}) {
+        const QJsonObject metadata = MetadataObject(details.value(key));
+        if (!metadata.isEmpty()) {
+            sources.push_back(metadata);
+        }
+    }
+    return sources;
+}
+
+void SetCanonicalText(
+    QJsonObject& normalized,
+    const QVector<QJsonObject>& sources,
+    const QString& target,
+    std::initializer_list<QString> aliases) {
+    if (HasValue(normalized.value(target))) {
+        if (normalized.value(target).isString()) {
+            normalized.insert(target, normalized.value(target).toString().trimmed());
+        }
+        return;
+    }
+    for (const QJsonObject& source : sources) {
+        const QString text = EventText(source, aliases);
+        if (!text.isEmpty()) {
+            normalized.insert(target, text);
+            return;
+        }
+    }
+}
+
+void SetCanonicalValue(
+    QJsonObject& normalized,
+    const QVector<QJsonObject>& sources,
+    const QString& target,
+    std::initializer_list<QString> aliases) {
+    const auto usable_number = [](const QJsonValue& value) {
+        if (value.isDouble()) {
+            return std::isfinite(value.toDouble()) && value.toDouble() >= 0.0;
+        }
+        if (value.isString()) {
+            bool converted = false;
+            const double number = value.toString().trimmed().toDouble(&converted);
+            return converted && std::isfinite(number) && number >= 0.0;
+        }
+        return false;
+    };
+    if (usable_number(normalized.value(target))) {
+        return;
+    }
+    for (const QJsonObject& source : sources) {
+        for (const QString& alias : aliases) {
+            const QJsonValue value = JsonValueAtPath(source, alias);
+            if (usable_number(value)) {
+                normalized.insert(target, value.isDouble()
+                    ? value : QJsonValue(value.toString().trimmed().toDouble()));
+                return;
+            }
+        }
+    }
+}
+
+void SetCanonicalBoolean(
+    QJsonObject& normalized,
+    const QVector<QJsonObject>& sources,
+    const QString& target,
+    std::initializer_list<QString> aliases) {
+    const QJsonValue current = normalized.value(target);
+    if (current.isBool()) {
+        return;
+    }
+    for (const QJsonObject& source : sources) {
+        for (const QString& alias : aliases) {
+            const QJsonValue value = JsonValueAtPath(source, alias);
+            if (value.isBool()) {
+                normalized.insert(target, value);
+                return;
+            }
+            if (value.isString()) {
+                const QString text = value.toString().trimmed().toLower();
+                if (text == QStringLiteral("true")) {
+                    normalized.insert(target, true);
+                    return;
+                }
+                if (text == QStringLiteral("false")) {
+                    normalized.insert(target, false);
+                    return;
+                }
+            }
+        }
+    }
+}
+
+QJsonObject NormalizeJobDetails(const QJsonObject& details) {
+    QJsonObject normalized = details;
+    const QVector<QJsonObject> sources = JobDetailSources(details);
+    SetCanonicalText(normalized, sources, QStringLiteral("job_id"), {
+        QStringLiteral("job_id"), QStringLiteral("job.id"),
+        QStringLiteral("delivery_id"), QStringLiteral("delivery.id"),
+        QStringLiteral("identity.job_id"), QStringLiteral("identity.id"),
+        QStringLiteral("event_key.job_id"), QStringLiteral("event_key.delivery_id")});
+    SetCanonicalText(normalized, sources, QStringLiteral("cargo"), {
+        QStringLiteral("cargo"), QStringLiteral("cargo_name"), QStringLiteral("cargo.name")});
+    SetCanonicalText(normalized, sources, QStringLiteral("cargo_id"), {
+        QStringLiteral("cargo_id"), QStringLiteral("cargo.id")});
+    SetCanonicalText(normalized, sources, QStringLiteral("source_city"), {
+        QStringLiteral("source_city"), QStringLiteral("source.city"),
+        QStringLiteral("origin_city"), QStringLiteral("origin.city"),
+        QStringLiteral("source"), QStringLiteral("origin")});
+    SetCanonicalText(normalized, sources, QStringLiteral("source_company"), {
+        QStringLiteral("source_company"), QStringLiteral("source.company"),
+        QStringLiteral("origin_company"), QStringLiteral("origin.company")});
+    SetCanonicalText(normalized, sources, QStringLiteral("destination_city"), {
+        QStringLiteral("destination_city"), QStringLiteral("destination.city"),
+        QStringLiteral("target_city"), QStringLiteral("target.city"),
+        QStringLiteral("destination"), QStringLiteral("target")});
+    SetCanonicalText(normalized, sources, QStringLiteral("destination_company"), {
+        QStringLiteral("destination_company"), QStringLiteral("destination.company"),
+        QStringLiteral("target_company"), QStringLiteral("target.company")});
+    SetCanonicalValue(normalized, sources, QStringLiteral("income"), {
+        QStringLiteral("income"), QStringLiteral("revenue")});
+    SetCanonicalValue(normalized, sources, QStringLiteral("driven_distance_km"), {
+        QStringLiteral("driven_distance_km"), QStringLiteral("distance_driven_km"),
+        QStringLiteral("distance.km")});
+    SetCanonicalValue(normalized, sources, QStringLiteral("delivery_time_game_minutes"), {
+        QStringLiteral("delivery_time_game_minutes"), QStringLiteral("delivery.time")});
+    SetCanonicalValue(normalized, sources, QStringLiteral("xp"), {
+        QStringLiteral("xp"), QStringLiteral("earned.xp")});
+    SetCanonicalValue(normalized, sources, QStringLiteral("damage"), {
+        QStringLiteral("damage"), QStringLiteral("cargo.damage")});
+    SetCanonicalValue(normalized, sources, QStringLiteral("weight"), {
+        QStringLiteral("weight"), QStringLiteral("cargo.mass")});
+    SetCanonicalBoolean(normalized, sources, QStringLiteral("special_job"), {
+        QStringLiteral("special_job"), QStringLiteral("is_special_job"),
+        QStringLiteral("special.job")});
+    return normalized;
+}
+
+QString StableJobIdentity(const QJsonObject& details) {
+    return EventText(details, {
+        QStringLiteral("job_id"), QStringLiteral("job.id"),
+        QStringLiteral("delivery_id"), QStringLiteral("delivery.id"),
+        QStringLiteral("nlsi_job_id")});
+}
+
+QString EventRecordIdentity(
+    const QJsonObject& details,
+    const QString& timestamp,
+    const QString& provider) {
+    const QString stable_identity = StableJobIdentity(details);
+    if (!stable_identity.isEmpty()) {
+        return stable_identity;
+    }
+    const QByteArray identity_material = provider.toUtf8() + '\n'
+        + timestamp.toUtf8() + '\n'
+        + QJsonDocument(details).toJson(QJsonDocument::Compact);
+    return QStringLiteral("event-%1").arg(QString::fromLatin1(
+        QCryptographicHash::hash(identity_material, QCryptographicHash::Sha256).toHex()));
+}
+
+bool HasCompleteDeliveryLabels(const QJsonObject& details) {
+    return !EventText(details, {
+               QStringLiteral("cargo"), QStringLiteral("cargo_name"),
+               QStringLiteral("cargo.name")}).isEmpty()
+        && !EventText(details, {
+               QStringLiteral("source_city"), QStringLiteral("source.city")}).isEmpty()
+        && !EventText(details, {
+               QStringLiteral("destination_city"), QStringLiteral("destination.city")}).isEmpty();
+}
+
+bool CompleteJobLabelsMatch(const JobRecord& left, const JobRecord& right) {
+    const QString left_cargo = EventText(left.details, {
+        QStringLiteral("cargo"), QStringLiteral("cargo_name"), QStringLiteral("cargo.name")});
+    const QString right_cargo = EventText(right.details, {
+        QStringLiteral("cargo"), QStringLiteral("cargo_name"), QStringLiteral("cargo.name")});
+    const QString left_source = EventText(left.details, {
+        QStringLiteral("source_city"), QStringLiteral("source.city")});
+    const QString right_source = EventText(right.details, {
+        QStringLiteral("source_city"), QStringLiteral("source.city")});
+    const QString left_destination = EventText(left.details, {
+        QStringLiteral("destination_city"), QStringLiteral("destination.city")});
+    const QString right_destination = EventText(right.details, {
+        QStringLiteral("destination_city"), QStringLiteral("destination.city")});
+    if (left_cargo.isEmpty() || right_cargo.isEmpty()
+        || left_source.isEmpty() || right_source.isEmpty()
+        || left_destination.isEmpty() || right_destination.isEmpty()
+        || left_cargo != right_cargo || left_source != right_source
+        || left_destination != right_destination) {
+        return false;
+    }
+    for (const auto& keys : {
+             std::initializer_list<QString>{QStringLiteral("source_company"), QStringLiteral("source.company")},
+             std::initializer_list<QString>{QStringLiteral("destination_company"), QStringLiteral("destination.company")}}) {
+        const QString left_company = EventText(left.details, keys);
+        const QString right_company = EventText(right.details, keys);
+        if (!left_company.isEmpty() && !right_company.isEmpty()
+            && left_company != right_company) {
+            return false;
+        }
+    }
+    return true;
+}
+
+QJsonObject MergeAvailableDetails(const QJsonObject& existing, const QJsonObject& incoming) {
+    QJsonObject merged = existing;
+    for (auto it = incoming.constBegin(); it != incoming.constEnd(); ++it) {
+        const QJsonValue old_value = merged.value(it.key());
+        if (old_value.isObject() && it.value().isObject()) {
+            merged.insert(it.key(), MergeAvailableDetails(old_value.toObject(), it.value().toObject()));
+        } else if (!HasValue(old_value) && HasValue(it.value())) {
+            merged.insert(it.key(), it.value());
+        }
+    }
+    return merged;
+}
+
+bool TimestampsWithinFiveSeconds(const QString& left, const QString& right) {
+    const QDateTime left_time = nlsi::time::ParseInstant(left);
+    const QDateTime right_time = nlsi::time::ParseInstant(right);
+    return left_time.isValid() && right_time.isValid()
+        && std::abs(left_time.msecsTo(right_time)) <= 5000;
+}
+
+bool JobRecordsMatch(const JobRecord& left, const JobRecord& right) {
+    if (left.status != right.status) {
+        return false;
+    }
+    if (!TimestampsWithinFiveSeconds(left.timestamp, right.timestamp)) {
+        return false;
+    }
+    const QString left_job_id = StableJobIdentity(left.details);
+    const QString right_job_id = StableJobIdentity(right.details);
+    if (!left_job_id.isEmpty() && !right_job_id.isEmpty()) {
+        if (left_job_id != right_job_id) {
+            return false;
+        }
+    } else {
+        const bool same_provider_duplicate = !left.provider.isEmpty()
+            && left.provider == right.provider && left.timestamp == right.timestamp;
+        const bool cross_provider_match = !left.provider.isEmpty()
+            && !right.provider.isEmpty() && left.provider != right.provider;
+        if ((!same_provider_duplicate && !cross_provider_match)
+            || !CompleteJobLabelsMatch(left, right)) {
+            return false;
+        }
+    }
+
+    for (const auto& keys : {
+             std::initializer_list<QString>{QStringLiteral("cargo"), QStringLiteral("cargo_name")},
+             std::initializer_list<QString>{QStringLiteral("source_city"), QStringLiteral("source.city")},
+             std::initializer_list<QString>{QStringLiteral("source_company"), QStringLiteral("source.company")},
+             std::initializer_list<QString>{QStringLiteral("destination_city"), QStringLiteral("destination.city")},
+             std::initializer_list<QString>{QStringLiteral("destination_company"), QStringLiteral("destination.company")}}) {
+        const QString left_value = EventText(left.details, keys);
+        const QString right_value = EventText(right.details, keys);
+        if (!left_value.isEmpty() && !right_value.isEmpty() && left_value != right_value) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void MergeJobRecord(JobRecord& existing, const JobRecord& incoming) {
+    if (existing.cargo.isEmpty()) existing.cargo = incoming.cargo;
+    if (existing.source.isEmpty()) existing.source = incoming.source;
+    if (existing.destination.isEmpty()) existing.destination = incoming.destination;
+    if (existing.identity.isEmpty()) existing.identity = incoming.identity;
+    if (existing.nlsi_job_id.isEmpty()) existing.nlsi_job_id = incoming.nlsi_job_id;
+    existing.details = MergeAvailableDetails(existing.details, incoming.details);
+    if (existing.provider.isEmpty()) existing.provider = incoming.provider;
 }
 
 QString ProviderEventKey(
@@ -320,12 +666,15 @@ bool HistoryStore::LoadJobs() {
         }
         const QString key = object.value(QStringLiteral("event_key")).toString();
         const QJsonObject details = object.value(QStringLiteral("details")).toObject();
-        const QString job_id = EventText(details, {
-            QStringLiteral("job_id"), QStringLiteral("job.id")});
-        if (!job_id.isEmpty()) {
-            recorded_job_events_.insert(QStringLiteral("job_id:%1").arg(job_id));
-        } else if (!key.isEmpty()) {
+        if (!key.isEmpty()) {
             recorded_job_events_.insert(key);
+        }
+        const QJsonArray source_event_keys =
+            object.value(QStringLiteral("source_event_keys")).toArray();
+        for (const QJsonValue& event_key : source_event_keys) {
+            if (event_key.isString() && !event_key.toString().isEmpty()) {
+                recorded_job_events_.insert(event_key.toString());
+            }
         }
         const QString identity = object.value(QStringLiteral("identity")).toString();
         const QString nlsi_job_id = object.value(QStringLiteral("nlsi_job_id")).toString();
@@ -335,16 +684,53 @@ bool HistoryStore::LoadJobs() {
         if (!nlsi_job_id.isEmpty()) {
             used_job_ids_.insert(nlsi_job_id);
         }
-        snapshot_.jobs.push_back({
-            identity,
-            object.value(QStringLiteral("cargo")).toString(),
-            object.value(QStringLiteral("source")).toString(),
-            object.value(QStringLiteral("destination")).toString(),
+        JobRecord candidate{
+            identity.isEmpty()
+                ? EventRecordIdentity(NormalizeJobDetails(details),
+                    object.value(QStringLiteral("timestamp")).toString(),
+                    object.value(QStringLiteral("provider")).toString())
+                : identity,
+            IsUsableText(object.value(QStringLiteral("cargo")).toString())
+                ? object.value(QStringLiteral("cargo")).toString().trimmed() : QString(),
+            IsUsableText(object.value(QStringLiteral("source")).toString())
+                ? object.value(QStringLiteral("source")).toString().trimmed() : QString(),
+            IsUsableText(object.value(QStringLiteral("destination")).toString())
+                ? object.value(QStringLiteral("destination")).toString().trimmed() : QString(),
             object.value(QStringLiteral("status")).toString(),
             object.value(QStringLiteral("timestamp")).toString(),
-            details,
+            NormalizeJobDetails(details),
             nlsi_job_id,
-        });
+            object.value(QStringLiteral("provider")).toString(),
+        };
+        if (candidate.cargo.isEmpty()) {
+            candidate.cargo = EventText(candidate.details, {
+                QStringLiteral("cargo"), QStringLiteral("cargo_name"), QStringLiteral("cargo.name")});
+        }
+        if (candidate.source.isEmpty()) {
+            candidate.source = RouteText(
+                EventText(candidate.details, {
+                    QStringLiteral("source_company"), QStringLiteral("source.company")}),
+                EventText(candidate.details, {
+                    QStringLiteral("source_city"), QStringLiteral("source.city")}));
+        }
+        if (candidate.destination.isEmpty()) {
+            candidate.destination = RouteText(
+                EventText(candidate.details, {
+                    QStringLiteral("destination_company"), QStringLiteral("destination.company")}),
+                EventText(candidate.details, {
+                    QStringLiteral("destination_city"), QStringLiteral("destination.city")}));
+        }
+        bool merged = false;
+        for (JobRecord& existing : snapshot_.jobs) {
+            if (JobRecordsMatch(existing, candidate)) {
+                MergeJobRecord(existing, candidate);
+                merged = true;
+                break;
+            }
+        }
+        if (!merged) {
+            snapshot_.jobs.push_back(std::move(candidate));
+        }
     }
     return true;
 }
@@ -387,26 +773,29 @@ bool HistoryStore::LoadTelemetryJobs() {
             if (!delivered && !cancelled) {
                 continue;
             }
-            QJsonObject details = object.value(QStringLiteral("data")).toObject();
-            const QString game_job_id = EventText(details, {
-                QStringLiteral("job_id"), QStringLiteral("job.id"),
-                QStringLiteral("cargo_id"), QStringLiteral("cargo.id")});
+            QJsonObject details = NormalizeJobDetails(
+                object.value(QStringLiteral("data")).toObject());
             const QString status = delivered
                 ? QStringLiteral("Delivered") : QStringLiteral("Cancelled");
             const QString timestamp = object.value(QStringLiteral("timestamp_utc")).toString();
-            const QString event_key = !game_job_id.isEmpty()
-                ? QStringLiteral("job_id:%1").arg(game_job_id)
-                : QStringLiteral("telemetry:%1|%2|%3")
-                    .arg(EventText(details, {QStringLiteral("provider_event_id")}),
-                        status, timestamp);
+            const QString event_key = QStringLiteral("telemetry:%1|%2|%3|%4")
+                .arg(object.value(QStringLiteral("provider")).toString(),
+                    EventText(details, {QStringLiteral("provider_event_id")}),
+                    status, timestamp)
+                + QLatin1Char('|')
+                + QString::fromUtf8(QJsonDocument(details).toJson(QJsonDocument::Compact));
             if (recorded_job_events_.contains(event_key)) {
                 continue;
             }
-            const QString identity = game_job_id.isEmpty()
-                ? event_key : game_job_id;
+            const QString stable_identity = StableJobIdentity(details);
+            if (stable_identity.isEmpty() && !HasCompleteDeliveryLabels(details)) {
+                continue;
+            }
+            const QString identity = EventRecordIdentity(
+                details, timestamp, object.value(QStringLiteral("provider")).toString());
             const QString cargo = EventText(details, {
                 QStringLiteral("cargo"), QStringLiteral("cargo_name"),
-                QStringLiteral("cargo.name"), QStringLiteral("cargo.id")});
+                QStringLiteral("cargo.name")});
             const QString source_company = EventText(details, {
                 QStringLiteral("source_company"), QStringLiteral("source.company")});
             const QString source_city = EventText(details, {
@@ -416,23 +805,28 @@ bool HistoryStore::LoadTelemetryJobs() {
                 QStringLiteral("destination.company")});
             const QString destination_city = EventText(details, {
                 QStringLiteral("destination_city"), QStringLiteral("destination.city")});
-            const auto route = [](const QString& company, const QString& city) {
-                if (company.isEmpty()) return city;
-                if (city.isEmpty() || company == city) return company;
-                return company + QStringLiteral(" · ") + city;
-            };
-            const QString source = route(source_company, source_city);
-            const QString destination = route(destination_company, destination_city);
-            snapshot_.jobs.push_back({
+            JobRecord candidate{
                 identity,
                 cargo,
-                source,
-                destination,
+                RouteText(source_company, source_city),
+                RouteText(destination_company, destination_city),
                 status,
                 timestamp,
                 details,
                 details.value(QStringLiteral("nlsi_job_id")).toString(),
-            });
+                object.value(QStringLiteral("provider")).toString(),
+            };
+            bool merged = false;
+            for (JobRecord& existing : snapshot_.jobs) {
+                if (JobRecordsMatch(existing, candidate)) {
+                    MergeJobRecord(existing, candidate);
+                    merged = true;
+                    break;
+                }
+            }
+            if (!merged) {
+                snapshot_.jobs.push_back(std::move(candidate));
+            }
             recorded_job_events_.insert(event_key);
         }
     }
@@ -698,7 +1092,8 @@ bool HistoryStore::RecordJob(
     const telemetry::JobSnapshot& job,
     const QString& event_type,
     const QString& timestamp,
-    const QJsonObject& event_details) {
+    const QJsonObject& event_details,
+    const QString& provider) {
     std::lock_guard<std::mutex> lock(mutex_);
     const bool delivered = event_type == QStringLiteral("job.delivered");
     const bool cancelled = event_type == QStringLiteral("job.cancelled");
@@ -706,59 +1101,75 @@ bool HistoryStore::RecordJob(
         return true;
     }
     const QString status = delivered ? QStringLiteral("Delivered") : QStringLiteral("Cancelled");
-    const QString job_id = EventText(event_details, {
-        QStringLiteral("job_id"), QStringLiteral("job.id")});
-    const QString event_identity = EventText(event_details, {
+    const QJsonObject normalized_details = NormalizeJobDetails(event_details);
+    const QString job_id = StableJobIdentity(normalized_details);
+    const QString event_identity = EventText(normalized_details, {
         QStringLiteral("cargo_id"), QStringLiteral("cargo.id")});
-    const QString identity = !job_id.isEmpty()
-        ? job_id
-        : (job.identity.empty() ? event_identity : ToQString(job.identity));
-    if (identity.isEmpty()) {
-        return true;
-    }
-    const QString detail_key = QString::fromUtf8(
-        QJsonDocument(event_details).toJson(QJsonDocument::Compact));
-    const QString event_key = !job_id.isEmpty()
-        ? QStringLiteral("job_id:%1").arg(job_id)
-        : identity + QLatin1Char('|') + status
-            + QLatin1Char('|') + timestamp + QLatin1Char('|') + detail_key;
-    if (recorded_job_events_.contains(event_key)) {
-        return true;
-    }
-    QString nlsi_job_id = job_ids_.value(identity);
-    if (nlsi_job_id.isEmpty()) {
-        nlsi_job_id = AllocateNlsiJobId();
-        if (!nlsi_job_id.isEmpty()) {
-            job_ids_.insert(identity, nlsi_job_id);
-            used_job_ids_.insert(nlsi_job_id);
-            if (!SaveJobIds()) {
-                job_ids_.remove(identity);
-                used_job_ids_.remove(nlsi_job_id);
-                return false;
-            }
-        }
-    }
-    if (nlsi_job_id.isEmpty()) {
-        SetError(QStringLiteral("Could not allocate a unique NLSI job ID; all four-digit IDs are in use."));
-        return false;
-    }
     const QString snapshot_cargo_id = FieldText(job.cargo_id);
     const QString event_job_identity = !job_id.isEmpty() ? job_id : event_identity;
-    const bool snapshot_matches_event = !snapshot_cargo_id.isEmpty()
-        && snapshot_cargo_id == event_job_identity;
+    const bool snapshot_identity_matches =
+        !snapshot_cargo_id.isEmpty()
+        && !event_job_identity.isEmpty() && event_job_identity == snapshot_cargo_id;
+    const auto raw_snapshot_field = [snapshot_identity_matches](const auto& field) {
+        return snapshot_identity_matches ? FieldText(field) : QString();
+    };
+    const QString event_cargo = EventText(normalized_details, {
+        QStringLiteral("cargo"), QStringLiteral("cargo_name"), QStringLiteral("cargo.name")});
+    const QString snapshot_cargo = raw_snapshot_field(job.cargo);
+    const bool snapshot_details_compatible =
+        (event_cargo.isEmpty() || snapshot_cargo.isEmpty() || event_cargo == snapshot_cargo);
+    const auto matches_event_field = [](const QString& event_value, const QString& snapshot_value) {
+        return event_value.isEmpty() || snapshot_value.isEmpty() || event_value == snapshot_value;
+    };
+    const bool snapshot_route_compatible =
+        matches_event_field(
+            EventText(normalized_details, {QStringLiteral("source_company"), QStringLiteral("source.company")}),
+            raw_snapshot_field(job.source_company))
+        && matches_event_field(
+            EventText(normalized_details, {QStringLiteral("source_city"), QStringLiteral("source.city")}),
+            raw_snapshot_field(job.source_city))
+        && matches_event_field(
+            EventText(normalized_details, {
+                QStringLiteral("destination_company"), QStringLiteral("destination.company")}),
+            raw_snapshot_field(job.destination_company))
+        && matches_event_field(
+            EventText(normalized_details, {
+                QStringLiteral("destination_city"), QStringLiteral("destination.city")}),
+            raw_snapshot_field(job.destination_city));
+    const bool snapshot_matches_event = snapshot_identity_matches
+        && snapshot_details_compatible && snapshot_route_compatible;
+    if (job_id.isEmpty() && !snapshot_matches_event
+        && !HasCompleteDeliveryLabels(normalized_details)) {
+        return true;
+    }
     const auto snapshot_field = [snapshot_matches_event](const auto& field) {
         return snapshot_matches_event ? FieldText(field) : QString();
     };
-    const QString event_cargo = EventText(event_details, {
-        QStringLiteral("cargo"), QStringLiteral("cargo_name"), QStringLiteral("cargo.id")});
-    const QString cargo = event_cargo.isEmpty() ? snapshot_field(job.cargo) : event_cargo;
-    const QString event_source_company = EventText(event_details, {
+    const QString identity = !job_id.isEmpty()
+        ? job_id
+        : (snapshot_matches_event ? ToQString(job.identity)
+            : EventRecordIdentity(normalized_details, timestamp, provider));
+    const QString detail_key = QString::fromUtf8(
+        QJsonDocument(normalized_details).toJson(QJsonDocument::Compact));
+    const QString event_key = identity + QLatin1Char('|') + status
+        + QLatin1Char('|') + timestamp + QLatin1Char('|') + detail_key;
+    if (recorded_job_events_.contains(event_key)
+        && (job_id.isEmpty() || std::none_of(
+            snapshot_.jobs.cbegin(), snapshot_.jobs.cend(), [&job_id, &status](const JobRecord& record) {
+                return record.status == status
+                    && EventText(record.details, {
+                        QStringLiteral("job_id"), QStringLiteral("job.id")}) == job_id;
+            }))) {
+        return true;
+    }
+    const QString cargo = event_cargo.isEmpty() ? snapshot_cargo : event_cargo;
+    const QString event_source_company = EventText(normalized_details, {
         QStringLiteral("source_company"), QStringLiteral("source.company")});
-    const QString event_source_city = EventText(event_details, {
+    const QString event_source_city = EventText(normalized_details, {
         QStringLiteral("source_city"), QStringLiteral("source.city")});
-    const QString event_destination_company = EventText(event_details, {
+    const QString event_destination_company = EventText(normalized_details, {
         QStringLiteral("destination_company"), QStringLiteral("destination.company")});
-    const QString event_destination_city = EventText(event_details, {
+    const QString event_destination_city = EventText(normalized_details, {
         QStringLiteral("destination_city"), QStringLiteral("destination.city")});
     const QString source_company = event_source_company.isEmpty()
         ? snapshot_field(job.source_company) : event_source_company;
@@ -768,32 +1179,14 @@ bool HistoryStore::RecordJob(
         ? snapshot_field(job.destination_company) : event_destination_company;
     const QString destination_city = event_destination_city.isEmpty()
         ? snapshot_field(job.destination_city) : event_destination_city;
-    const QString source = source_company.isEmpty() && source_city.isEmpty()
-        ? ((event_source_company.isEmpty() || event_source_city.isEmpty()
-                || event_source_company == event_source_city)
-            ? (event_source_company.isEmpty() ? event_source_city : event_source_company)
-            : event_source_company + QStringLiteral(" · ") + event_source_city)
-        : (source_company.isEmpty() || source_city.isEmpty()
-                || source_company == source_city
-            ? (source_company.isEmpty() ? source_city : source_company)
-            : source_company + QStringLiteral(" · ") + source_city);
-    const QString destination = destination_company.isEmpty() && destination_city.isEmpty()
-        ? ((event_destination_company.isEmpty() || event_destination_city.isEmpty()
-                || event_destination_company == event_destination_city)
-            ? (event_destination_company.isEmpty()
-                ? event_destination_city
-                : event_destination_company)
-            : event_destination_company + QStringLiteral(" · ") + event_destination_city)
-        : (destination_company.isEmpty() || destination_city.isEmpty()
-                || destination_company == destination_city
-            ? (destination_company.isEmpty() ? destination_city : destination_company)
-            : destination_company + QStringLiteral(" · ") + destination_city);
-    QJsonObject persisted_details = event_details;
-    const auto persist_snapshot_field = [&persisted_details, &event_details](
+    const QString source = RouteText(source_company, source_city);
+    const QString destination = RouteText(destination_company, destination_city);
+    QJsonObject persisted_details = normalized_details;
+    const auto persist_snapshot_field = [&persisted_details, &normalized_details](
                                             const QString& name,
                                             const QString& value,
                                             std::initializer_list<QString> event_keys) {
-        if (!value.isEmpty() && EventText(event_details, event_keys).isEmpty()) {
+        if (!value.isEmpty() && EventText(normalized_details, event_keys).isEmpty()) {
             persisted_details.insert(name, value);
         }
     };
@@ -817,34 +1210,180 @@ bool HistoryStore::RecordJob(
     persist_snapshot_field(QStringLiteral("planned_distance"),
         snapshot_field(job.planned_distance), {
             QStringLiteral("planned_distance"), QStringLiteral("planned_distance_km")});
+
+    JobRecord candidate{
+        identity, cargo, source, destination, status, timestamp, persisted_details, {}, provider};
+    auto matching_job = snapshot_.jobs.end();
+    for (auto it = snapshot_.jobs.begin(); it != snapshot_.jobs.end(); ++it) {
+        if (JobRecordsMatch(*it, candidate)) {
+            matching_job = it;
+            break;
+        }
+    }
+    QString canonical_identity = identity;
+    QString nlsi_job_id;
+    QString record_timestamp = timestamp;
+    bool matched_existing = matching_job != snapshot_.jobs.end();
+    if (matching_job != snapshot_.jobs.end()) {
+        candidate = *matching_job;
+        const QJsonObject previous_details = candidate.details;
+        const QString incoming_cargo = event_cargo.isEmpty() ? snapshot_cargo : event_cargo;
+        const QString incoming_source = RouteText(source_company, source_city);
+        const QString incoming_destination =
+            RouteText(destination_company, destination_city);
+        candidate.details = MergeAvailableDetails(previous_details, persisted_details);
+        if (candidate.cargo.isEmpty()) candidate.cargo = incoming_cargo;
+        if (candidate.source.isEmpty()) candidate.source = incoming_source;
+        if (candidate.destination.isEmpty()) candidate.destination = incoming_destination;
+        canonical_identity = matching_job->identity;
+        nlsi_job_id = matching_job->nlsi_job_id;
+        record_timestamp = matching_job->timestamp;
+        candidate.identity = canonical_identity;
+        candidate.timestamp = record_timestamp;
+        candidate.nlsi_job_id = nlsi_job_id;
+        if (candidate.provider.isEmpty()) {
+            candidate.provider = provider;
+        }
+    }
+    if (nlsi_job_id.isEmpty()) {
+        nlsi_job_id = job_ids_.value(canonical_identity);
+    }
+    if (nlsi_job_id.isEmpty()) {
+        nlsi_job_id = AllocateNlsiJobId();
+        if (!nlsi_job_id.isEmpty()) {
+            job_ids_.insert(canonical_identity, nlsi_job_id);
+            used_job_ids_.insert(nlsi_job_id);
+            if (!SaveJobIds()) {
+                job_ids_.remove(canonical_identity);
+                used_job_ids_.remove(nlsi_job_id);
+                return false;
+            }
+        }
+    }
+    if (nlsi_job_id.isEmpty()) {
+        SetError(QStringLiteral("Could not allocate a unique NLSI job ID; all four-digit IDs are in use."));
+        return false;
+    }
+    persisted_details = candidate.details;
     persisted_details.insert(QStringLiteral("nlsi_job_id"), nlsi_job_id);
     const QJsonObject record{
         {QStringLiteral("event_key"), event_key},
-        {QStringLiteral("identity"), identity},
+        {QStringLiteral("source_event_keys"), QJsonArray{event_key}},
+        {QStringLiteral("identity"), canonical_identity},
         {QStringLiteral("nlsi_job_id"), nlsi_job_id},
-        {QStringLiteral("cargo"), cargo},
-        {QStringLiteral("source"), source},
-        {QStringLiteral("destination"), destination},
+        {QStringLiteral("cargo"), candidate.cargo},
+        {QStringLiteral("source"), candidate.source},
+        {QStringLiteral("destination"), candidate.destination},
         {QStringLiteral("status"), status},
-        {QStringLiteral("timestamp"), timestamp},
+        {QStringLiteral("timestamp"), record_timestamp},
+        {QStringLiteral("provider"), candidate.provider},
         {QStringLiteral("details"), persisted_details},
     };
-    if (!AppendJsonLine(jobs_path_, record)) {
+    if (matched_existing) {
+        const JobRecord previous = snapshot_.jobs[
+            static_cast<qsizetype>(std::distance(snapshot_.jobs.begin(), matching_job))];
+        if (!UpdateJobRecord(previous, record, {event_key})) {
+            return false;
+        }
+    } else if (!AppendJsonLine(jobs_path_, record)) {
         return false;
     }
     recorded_job_events_.insert(event_key);
-    used_job_ids_.insert(identity);
+    used_job_ids_.insert(canonical_identity);
     used_job_ids_.insert(nlsi_job_id);
-    snapshot_.jobs.prepend({
-        identity, cargo, source, destination, status, timestamp, persisted_details, nlsi_job_id});
+    if (matched_existing) {
+        *matching_job = candidate;
+        matching_job->details = persisted_details;
+        matching_job->nlsi_job_id = nlsi_job_id;
+    } else {
+        snapshot_.jobs.prepend({
+            canonical_identity, candidate.cargo, candidate.source, candidate.destination,
+            status, record_timestamp, persisted_details, nlsi_job_id, provider});
+    }
     ++snapshot_.revision;
     snapshot_.error.clear();
     std::wstring log_error;
     if (!logger_.Log(
             QStringLiteral("[job] %1 %2 cargo=%3")
-                .arg(timestamp, status, cargo).toStdWString(),
+                .arg(record_timestamp, status, candidate.cargo).toStdWString(),
             &log_error)) {
         SetError(QString::fromStdWString(log_error));
+        return false;
+    }
+    return true;
+}
+
+bool HistoryStore::UpdateJobRecord(
+    const JobRecord& previous,
+    const QJsonObject& replacement,
+    const QStringList& event_keys) {
+    QFile input(jobs_path_);
+    if (!input.exists()) {
+        return AppendJsonLine(jobs_path_, replacement);
+    }
+    if (!input.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        SetError(QStringLiteral("Could not read %1 before updating a completed job: %2")
+            .arg(jobs_path_, input.errorString()));
+        return false;
+    }
+
+    QByteArray contents;
+    bool replaced = false;
+    while (!input.atEnd()) {
+        const QByteArray line = input.readLine();
+        QJsonObject object;
+        QString parse_error;
+        const bool valid_record = ParseRecord(
+            line, jobs_path_, 0, object, parse_error);
+        const bool target_record = valid_record
+            && object.value(QStringLiteral("identity")).toString() == previous.identity
+            && object.value(QStringLiteral("status")).toString() == previous.status
+            && object.value(QStringLiteral("timestamp")).toString() == previous.timestamp;
+        if (!target_record) {
+            contents += line;
+            continue;
+        }
+        if (replaced) {
+            continue;
+        }
+
+        QJsonArray recorded_keys =
+            object.value(QStringLiteral("source_event_keys")).toArray();
+        const QString original_key = object.value(QStringLiteral("event_key")).toString();
+        if (!original_key.isEmpty() && !recorded_keys.contains(original_key)) {
+            recorded_keys.push_back(original_key);
+        }
+        for (const QString& event_key : event_keys) {
+            if (!event_key.isEmpty() && !recorded_keys.contains(event_key)) {
+                recorded_keys.push_back(event_key);
+            }
+        }
+        QJsonObject updated = object;
+        for (auto it = replacement.constBegin(); it != replacement.constEnd(); ++it) {
+            if (it.key() != QStringLiteral("event_key")
+                && it.key() != QStringLiteral("source_event_keys")) {
+                updated.insert(it.key(), it.value());
+            }
+        }
+        if (original_key.isEmpty()) {
+            updated.insert(QStringLiteral("event_key"),
+                replacement.value(QStringLiteral("event_key")));
+        }
+        updated.insert(QStringLiteral("source_event_keys"), recorded_keys);
+        contents += QJsonDocument(updated).toJson(QJsonDocument::Compact) + '\n';
+        replaced = true;
+    }
+    input.close();
+
+    if (!replaced) {
+        contents += QJsonDocument(replacement).toJson(QJsonDocument::Compact) + '\n';
+    }
+    QSaveFile output(jobs_path_);
+    if (!output.open(QIODevice::WriteOnly)
+        || output.write(contents) != contents.size()
+        || !output.commit()) {
+        SetError(QStringLiteral("Could not atomically update completed-job history %1: %2")
+            .arg(jobs_path_, output.errorString()));
         return false;
     }
     return true;

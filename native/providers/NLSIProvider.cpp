@@ -10,6 +10,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <cwctype>
 #include <cstring>
 #include <map>
 #include <optional>
@@ -430,7 +431,13 @@ void SetText(
     const JsonValue* value,
     const std::wstring& timestamp) {
     if (value && value->type != JsonValue::Type::Null) {
-        field.Set(JsonText(value), L"NLSI", timestamp);
+        std::wstring text = JsonText(value);
+        const bool has_text = std::any_of(text.begin(), text.end(), [](wchar_t character) {
+            return !std::iswspace(character);
+        });
+        if (has_text) {
+            field.Set(std::move(text), L"NLSI", timestamp);
+        }
     }
 }
 
