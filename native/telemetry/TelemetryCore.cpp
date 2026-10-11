@@ -7,7 +7,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <QUuid>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <iomanip>
@@ -18,6 +20,8 @@
 
 #include "time/ApplicationTime.h"
 #include "providers/ScsPositionIpc.h"
+#include "sync/DriverKeyClient.h"
+#include "sync/SyncClient.h"
 
 namespace {
 
@@ -269,7 +273,14 @@ bool TelemetryCore::Initialize(const std::wstring& user_data_directory) {
             std::wstring recorder_error;
             if (!telemetry_recorder_->Start(user_data_directory, &recorder_error)) {
                 status_.storage_error = std::move(recorder_error);
+            } else {
+                sync_client_ = std::make_unique<sync::SyncClient>(
+                    *telemetry_recorder_,
+                    QString::fromStdWString(user_data_directory));
+                sync_client_->Start();
             }
+            driver_key_client_ = std::make_unique<sync::DriverKeyClient>(root);
+            driver_key_client_->Start();
             std::wstring log_error;
             const QString startup_message = QStringLiteral("[startup] NLSI Exclusive Logbook %1")
                 .arg(QCoreApplication::applicationVersion());
@@ -332,6 +343,12 @@ void TelemetryCore::BeginShutdown() {
             return;
         }
         shutdown_started_ = true;
+    }
+    if (sync_client_) {
+        sync_client_->Stop();
+    }
+    if (driver_key_client_) {
+        driver_key_client_->Stop();
     }
     trucksim_provider_.Stop();
     nlsi_provider_.Stop();
@@ -430,6 +447,22 @@ ProviderStatus TelemetryCore::Status() const {
             result.storage_error = recorder_error;
         }
     }
+    if (sync_client_) {
+        const sync::SyncStatus sync_status = sync_client_->Status();
+        result.api_connected = sync_status.database_connected;
+        result.sync_configured = sync_status.configured;
+        result.sync_in_progress = sync_status.syncing;
+        result.sync_pending_count = sync_status.pending_records;
+        result.last_api_check = sync_status.last_successful_check.toStdWString();
+        result.last_successful_sync = sync_status.last_successful_sync.toStdWString();
+        result.last_sync_attempt = sync_status.last_sync_attempt.toStdWString();
+        result.sync_error = sync_status.error.toStdWString();
+        result.sync_state = !sync_status.database_connected
+            ? L"Disconnected; API-to-database check has not succeeded"
+            : (sync_status.pending_records > 0
+                ? L"Sync Pending (" + std::to_wstring(sync_status.pending_records) + L" records)"
+                : L"Connected; API database check succeeded");
+    }
     return result;
 }
 
@@ -441,6 +474,22 @@ TelemetrySnapshot TelemetryCore::Snapshot() const {
 TelemetryUiState TelemetryCore::UiState() const {
     std::lock_guard<std::mutex> lock(mutex_);
     TelemetryUiState result = ui_state_;
+    if (sync_client_) {
+        const sync::SyncStatus sync_status = sync_client_->Status();
+        result.providers.api_connected = sync_status.database_connected;
+        result.providers.sync_configured = sync_status.configured;
+        result.providers.sync_in_progress = sync_status.syncing;
+        result.providers.sync_pending_count = sync_status.pending_records;
+        result.providers.last_api_check = sync_status.last_successful_check.toStdWString();
+        result.providers.last_successful_sync = sync_status.last_successful_sync.toStdWString();
+        result.providers.last_sync_attempt = sync_status.last_sync_attempt.toStdWString();
+        result.providers.sync_error = sync_status.error.toStdWString();
+        result.providers.sync_state = !sync_status.database_connected
+            ? L"Disconnected; API-to-database check has not succeeded"
+            : (sync_status.pending_records > 0
+                ? L"Sync Pending (" + std::to_wstring(sync_status.pending_records) + L" records)"
+                : L"Connected; API database check succeeded");
+    }
     if (history_store_ && result.fast.values.connected && result.job.available) {
         const QString game_job_identity = result.job.cargo_id.available
             && !result.job.cargo_id.value.empty()
@@ -487,6 +536,176 @@ bool TelemetryCore::FlushLocalWrites(std::chrono::milliseconds timeout) const {
 bool TelemetryCore::IsFreshEnough() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return status_.combined != CombinedProviderState::Disconnected;
+}
+
+bool TelemetryCore::CreateDemoDelivery(QString* error) {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (shutdown_started_ || !history_store_ || !telemetry_recorder_) {
+            if (error) {
+                *error = QStringLiteral("Local delivery storage is not initialized or is shutting down.");
+            }
+            return false;
+        }
+    }
+
+    const QDateTime completed_at = QDateTime::currentDateTimeUtc();
+    const QDateTime started_at = completed_at.addSecs(-18 * 60);
+    const QString job_id = QStringLiteral("demo-%1")
+        .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    const QString provider = QStringLiteral("NLSI Logbook Demo");
+    const QJsonObject details{
+        {QStringLiteral("job_id"), job_id},
+        {QStringLiteral("demo"), true},
+        {QStringLiteral("test_data"), true},
+        {QStringLiteral("data_source"), QStringLiteral("Send Demo button; not live telemetry")},
+        {QStringLiteral("driver_name"), QStringLiteral("DEMO DRIVER (TEST DATA)")},
+        {QStringLiteral("game_id"), QStringLiteral("ets2")},
+        {QStringLiteral("game_name"), QStringLiteral("Euro Truck Simulator 2 (DEMO)")},
+        {QStringLiteral("truck"), QStringLiteral("DEMO Volvo FH16 (TEST DATA)")},
+        {QStringLiteral("cargo_id"), QStringLiteral("demo-cargo-%1").arg(job_id.mid(5))},
+        {QStringLiteral("cargo"), QStringLiteral("Demo Cargo - TEST DATA")},
+        {QStringLiteral("source_company"), QStringLiteral("Demo Logistics Depot")},
+        {QStringLiteral("source_city"), QStringLiteral("Berlin (DEMO)")},
+        {QStringLiteral("destination_company"), QStringLiteral("Demo Distribution Center")},
+        {QStringLiteral("destination_city"), QStringLiteral("Prague (DEMO)")},
+        {QStringLiteral("driven_distance_km"), 248.6},
+        {QStringLiteral("planned_distance_km"), 250.0},
+        {QStringLiteral("income"), 8420},
+        {QStringLiteral("delivery_time_game_minutes"), 215},
+        {QStringLiteral("elapsed_real_minutes"), 18},
+        {QStringLiteral("started_at_utc"), started_at.toString(Qt::ISODateWithMs)},
+        {QStringLiteral("completed_at_utc"), completed_at.toString(Qt::ISODateWithMs)},
+        {QStringLiteral("xp"), 184},
+        {QStringLiteral("damage"), 0.0},
+        {QStringLiteral("weight_kg"), 18400},
+        {QStringLiteral("fuel_used_liters"), 72.4},
+    };
+    const auto send_event = [this, &job_id, &provider, &details](
+                                const QString& event,
+                                const QDateTime& timestamp) {
+        const QJsonObject packet{
+            {QStringLiteral("event"), event},
+            {QStringLiteral("timestamp"), timestamp.toString(Qt::ISODateWithMs)},
+            {QStringLiteral("provider"), provider},
+            {QStringLiteral("data"), details},
+        };
+        OnProviderEvent(QJsonDocument(packet).toJson(QJsonDocument::Compact).toStdString());
+        const session::HistorySnapshot history = History();
+        const bool recorded_event = std::any_of(
+            history.events.cbegin(), history.events.cend(),
+            [&job_id, &event](const session::EventRecord& record) {
+                if (record.type != event) {
+                    return false;
+                }
+                QJsonParseError parse_error;
+                const QJsonDocument document = QJsonDocument::fromJson(
+                    record.details.toUtf8(), &parse_error);
+                return parse_error.error == QJsonParseError::NoError
+                    && document.isObject()
+                    && document.object().value(QStringLiteral("data")).toObject()
+                        .value(QStringLiteral("job_id")).toString() == job_id;
+            });
+        if (event == QStringLiteral("job.started")) {
+            return recorded_event;
+        }
+        return recorded_event && std::any_of(
+            history.jobs.cbegin(), history.jobs.cend(),
+            [&job_id](const session::JobRecord& record) {
+                return record.details.value(QStringLiteral("job_id")).toString() == job_id
+                    && record.status == QStringLiteral("Delivered");
+            });
+    };
+
+    if (!send_event(QStringLiteral("job.started"), started_at)) {
+        if (error) {
+            const session::HistorySnapshot history = History();
+            *error = history.error.isEmpty()
+                ? QStringLiteral("The demo start event could not be recorded in local history.")
+                : history.error;
+        }
+        return false;
+    }
+    if (!send_event(QStringLiteral("job.delivered"), completed_at)) {
+        if (error) {
+            const session::HistorySnapshot history = History();
+            *error = history.error.isEmpty()
+                ? QStringLiteral("The demo delivery could not be recorded in local job history.")
+                : history.error;
+        }
+        return false;
+    }
+
+    if (!FlushLocalWrites(std::chrono::seconds(5))) {
+        if (error) {
+            *error = QStringLiteral(
+                "The demo appears in local job history, but its .nlsi record could not be confirmed on disk.");
+        }
+        return false;
+    }
+    SyncNow();
+    return true;
+}
+
+void TelemetryCore::SyncNow() {
+    if (sync_client_) {
+        sync_client_->SyncNow();
+    }
+}
+
+bool TelemetryCore::ConfigureSync(
+    const QString& api_base_url,
+    const QString& device_api_key,
+    QString* error) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!sync_client_) {
+        if (error) {
+            *error = QStringLiteral("Local telemetry storage is not available for sync configuration.");
+        }
+        return false;
+    }
+    return sync_client_->Configure(api_base_url, device_api_key, error);
+}
+
+QString TelemetryCore::SyncApiBaseUrl() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return sync_client_ ? sync_client_->ApiBaseUrl() : QString();
+}
+
+void TelemetryCore::ValidateDriverKey(
+    const QString& website_api_base_url,
+    const QString& driver_key,
+    sync::DriverKeyClient::Completion completion) {
+    if (!driver_key_client_) {
+        if (completion) {
+            completion(
+                false,
+                QStringLiteral("Protected per-user settings are unavailable."));
+        }
+        return;
+    }
+    driver_key_client_->ValidateAndSave(
+        website_api_base_url,
+        driver_key,
+        std::move(completion));
+}
+
+bool TelemetryCore::ClearDriverKey(QString* error) {
+    if (!driver_key_client_) {
+        if (error) {
+            *error = QStringLiteral("Protected per-user settings are unavailable.");
+        }
+        return false;
+    }
+    return driver_key_client_->Clear(error);
+}
+
+sync::DriverKeyStatus TelemetryCore::DriverKeyState() const {
+    return driver_key_client_ ? driver_key_client_->Status() : sync::DriverKeyStatus{};
+}
+
+QString TelemetryCore::DriverKeyApiBaseUrl() const {
+    return driver_key_client_ ? driver_key_client_->ApiBaseUrl() : QString();
 }
 
 void TelemetryCore::OnTruckSimUpdate(

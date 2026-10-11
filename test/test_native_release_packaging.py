@@ -14,10 +14,10 @@ SPEC.loader.exec_module(BUILDER)
 
 class NativeReleasePackagingTests(unittest.TestCase):
     def test_version_and_automatic_plugin_installation_policy(self) -> None:
-        self.assertEqual("1.5.4", BUILDER.VERSION)
+        self.assertEqual("1.5.9", BUILDER.VERSION)
         self.assertEqual("beta", BUILDER.CHANNEL)
         self.assertEqual("beta", BUILDER.INSTALL_CHANNEL)
-        self.assertEqual("v1.5.4-beta", BUILDER.RELEASE_TAG)
+        self.assertEqual("v1.5.9-beta", BUILDER.RELEASE_TAG)
         self.assertIn("Qt6Concurrent.dll", BUILDER.REQUIRED_RUNTIME_FILES)
         self.assertEqual(
             r"C:\Program Files\NLSI Exclusive Logbook",
@@ -52,6 +52,26 @@ class NativeReleasePackagingTests(unittest.TestCase):
         self.assertIn("received_at_utc DATETIME(3)", migration)
         self.assertNotRegex(migration, r"(?im)^\s*CREATE TABLE\s+(users|accounts)\b")
 
+    def test_device_migration_allows_independent_local_sequence_numbers(self) -> None:
+        migration = (ROOT / "db" / "migrations" / "004_driver_device_auth.sql").read_text(
+            encoding="utf-8"
+        )
+        fresh_schema = (
+            ROOT.parent / "nlsi_vtc" / "database" / "nlsi_vtc_schema.sql"
+        ).read_text(encoding="utf-8")
+        self.assertIn("DROP INDEX uq_provider_record_type_sequence", migration)
+        self.assertIn("ADD KEY ix_provider_record_type_sequence", migration)
+        self.assertIn("KEY ix_provider_record_type_sequence (record_type, sequence_no)", fresh_schema)
+        self.assertNotIn("UNIQUE KEY uq_provider_record_type_sequence", fresh_schema)
+
+    def test_website_api_routes_forward_to_existing_backend_handlers(self) -> None:
+        website_api = ROOT.parent / "nlsi_vtc" / "api"
+        for endpoint in ("heartbeat", "ingest", "status"):
+            route = (website_api / f"{endpoint}.php").read_text(encoding="utf-8")
+            self.assertIn("nlsi_forward_telemetry_endpoint", route)
+            self.assertIn(f"'{endpoint}.php'", route)
+            self.assertTrue((ROOT / "db" / "api" / f"{endpoint}.php").is_file())
+
     def test_only_hash_verified_official_plugin_architectures_are_packaged(self) -> None:
         self.assertEqual(2, len(BUILDER.TRUCKSIM_PLUGIN_FILES))
         for source, expected_hash, destination in BUILDER.TRUCKSIM_PLUGIN_FILES:
@@ -68,8 +88,8 @@ class NativeReleasePackagingTests(unittest.TestCase):
         self.assertEqual(2, len(BUILDER.SCS_POSITION_PLUGIN_FILES))
         self.assertEqual(
             [
-                ROOT / "build" / "plugins" / "v1.5.4-beta" / "win_x64" / "nlsi.dll",
-                ROOT / "build" / "plugins" / "v1.5.4-beta" / "win_x86" / "nlsi.dll",
+                ROOT / "build" / "plugins" / BUILDER.RELEASE_TAG / "win_x64" / "nlsi.dll",
+                ROOT / "build" / "plugins" / BUILDER.RELEASE_TAG / "win_x86" / "nlsi.dll",
             ],
             [source for source, _, _ in BUILDER.SCS_POSITION_PLUGIN_FILES],
         )
@@ -152,6 +172,14 @@ class NativeReleasePackagingTests(unittest.TestCase):
         installer_text = (ROOT / "installer" / "NLSI-Exclusive-Logbook.iss").read_text(
             encoding="utf-8"
         )
+        install_step = installer_text.split(
+            "procedure CurStepChanged(CurStep: TSetupStep);", maxsplit=1
+        )[1].split("function InitializeUninstall", maxsplit=1)[0]
+        self.assertIn("if CurStep = ssPostInstall then begin", install_step)
+        self.assertEqual(1, install_step.count("RunPowerShellScript('InstallTruckSimPlugin.ps1'"))
+        self.assertEqual(1, install_step.count("RunPowerShellScript('InstallScsPositionPlugin.ps1'"))
+        self.assertNotIn("ExistingInstallDetected", install_step)
+        self.assertNotIn("ExistingInstallRecovery", install_step)
         missing_executable_branch = installer_text.split(
             "if not FileExists(ExistingInstallDir + '\\NLSI-Exclusive-Logbook.exe') then begin",
             maxsplit=1,

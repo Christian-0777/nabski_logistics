@@ -104,6 +104,9 @@ qt_add_executable(NLSI-Exclusive-Logbook MANUAL_FINALIZATION
     session/HistoryStore.cpp
     logging/Logger.cpp
     logging/TelemetryRecorder.cpp
+    sync/SyncConfiguration.cpp
+    sync/SyncClient.cpp
+    sync/DriverKeyClient.cpp
     updater/GitHubUpdater.cpp
     resources/app.rc
     resources/resources.qrc
@@ -147,7 +150,7 @@ target_include_directories(NLSI-Exclusive-Logbook PRIVATE
 )
 
 target_link_libraries(NLSI-Exclusive-Logbook PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Svg Qt6::Concurrent shell32
+    Qt6::Widgets Qt6::Network Qt6::Svg Qt6::Concurrent shell32 crypt32
 )
 target_compile_definitions(NLSI-Exclusive-Logbook PRIVATE
     NLSI_VERSION="${NLSI_VERSION}"
@@ -185,6 +188,9 @@ if(BUILD_TESTING)
         session/HistoryStore.cpp
         logging/Logger.cpp
         logging/TelemetryRecorder.cpp
+        sync/SyncConfiguration.cpp
+        sync/SyncClient.cpp
+        sync/DriverKeyClient.cpp
         updater/GitHubUpdater.cpp
         app/SingleInstance.cpp
     )
@@ -217,7 +223,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/logging
         ${CMAKE_CURRENT_SOURCE_DIR}/updater
     )
-    target_link_libraries(nlsi_core_tests PRIVATE Qt6::Core Qt6::Network ws2_32)
+    target_link_libraries(nlsi_core_tests PRIVATE Qt6::Core Qt6::Network ws2_32 crypt32)
 
     if(MSVC)
         target_compile_options(nlsi_core_tests PRIVATE /W4)
@@ -269,6 +275,9 @@ if(BUILD_TESTING)
         session/HistoryStore.cpp
         logging/Logger.cpp
         logging/TelemetryRecorder.cpp
+        sync/SyncConfiguration.cpp
+        sync/SyncClient.cpp
+        sync/DriverKeyClient.cpp
         updater/GitHubUpdater.cpp
         app/SingleInstance.cpp
         resources/resources.qrc
@@ -293,7 +302,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/updater
     )
     target_link_libraries(nlsi_gui_tests PRIVATE
-        Qt6::Widgets Qt6::Network Qt6::Svg Qt6::Concurrent shell32
+        Qt6::Widgets Qt6::Network Qt6::Svg Qt6::Concurrent shell32 crypt32
     )
 
     if(MSVC)

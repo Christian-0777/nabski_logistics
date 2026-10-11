@@ -1,8 +1,10 @@
 #pragma once
 
 #include <chrono>
+#include <functional>
 #include <memory>
 #include <mutex>
+#include <QString>
 #include <string>
 #include <vector>
 
@@ -17,6 +19,11 @@
 #include "session/HistoryStore.h"
 #include "session/JobManager.h"
 #include "session/SessionManager.h"
+#include "sync/DriverKeyClient.h"
+
+namespace nlsi::sync {
+class SyncClient;
+}
 
 namespace nlsi::telemetry {
 
@@ -53,6 +60,20 @@ public:
     std::vector<std::wstring> TakeNewExpenseNotifications();
     bool FlushLocalWrites(std::chrono::milliseconds timeout) const;
     bool IsFreshEnough() const;
+    bool CreateDemoDelivery(QString* error);
+    void SyncNow();
+    bool ConfigureSync(
+        const QString& api_base_url,
+        const QString& device_api_key,
+        QString* error);
+    QString SyncApiBaseUrl() const;
+    void ValidateDriverKey(
+        const QString& website_api_base_url,
+        const QString& driver_key,
+        sync::DriverKeyClient::Completion completion);
+    bool ClearDriverKey(QString* error);
+    sync::DriverKeyStatus DriverKeyState() const;
+    QString DriverKeyApiBaseUrl() const;
 
 private:
     void OnTruckSimUpdate(
@@ -94,6 +115,8 @@ private:
     std::wstring shutdown_error_;
     std::unique_ptr<logging::Logger> logger_;
     std::unique_ptr<logging::TelemetryRecorder> telemetry_recorder_;
+    std::unique_ptr<sync::SyncClient> sync_client_;
+    std::unique_ptr<sync::DriverKeyClient> driver_key_client_;
     std::unique_ptr<session::HistoryStore> history_store_;
     std::vector<std::wstring> newly_completed_job_notifications_;
     std::vector<std::wstring> newly_recorded_expense_notifications_;

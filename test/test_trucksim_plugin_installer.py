@@ -177,6 +177,68 @@ class TruckSimPluginInstallerTests(unittest.TestCase):
             self.assertEqual(0, removed.returncode, removed.stderr)
             self.assertTrue(all(not path.exists() for path in destinations.values()))
 
+    def test_fresh_install_replaces_unmanaged_outdated_dlls_and_verifies_them(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            app_root = root / "app"
+            library_root = root / "SteamLibrary"
+            destinations = {
+                "win_x64": (
+                    library_root / "steamapps" / "common" / "Euro Truck Simulator 2"
+                    / "bin" / "win_x64" / "plugins" / "trucksim-gps-telemetry.dll"
+                ),
+                "win_x86": (
+                    library_root / "steamapps" / "common" / "Euro Truck Simulator 2"
+                    / "bin" / "win_x86" / "plugins" / "trucksim-gps-telemetry.dll"
+                ),
+            }
+            for architecture, destination in destinations.items():
+                destination.parent.mkdir(parents=True)
+                source = DLL64 if architecture == "win_x64" else DLL32
+                old_image = bytearray(source.read_bytes())
+                old_image[-1] ^= 0x01
+                destination.write_bytes(old_image)
+
+            result = self.invoke_installer(app_root, library_root)
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            status = (app_root / "logs" / "trucksim-plugin-status.txt").read_text(
+                encoding="utf-8-sig"
+            )
+            for architecture, destination in destinations.items():
+                source = DLL64 if architecture == "win_x64" else DLL32
+                self.assertEqual(source.read_bytes(), destination.read_bytes())
+                self.assertEqual(pe_machine(source), pe_machine(destination))
+                self.assertTrue(list(destination.parent.glob(destination.name + ".nlsi-*.bak")))
+                self.assertEqual(
+                    hashlib.sha256(source.read_bytes()).hexdigest().upper(),
+                    json.loads(
+                        (app_root / "tools" / "installed-trucksim-plugins.json")
+                        .read_text(encoding="utf-8-sig")
+                    )[str(destination)],
+                )
+            self.assertIn("replacing an outdated TruckSim GPS plugin", status)
+
+    def test_missing_source_fails_without_creating_game_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            library_root = root / "SteamLibrary"
+            destination = (
+                library_root / "steamapps" / "common" / "Euro Truck Simulator 2"
+                / "bin" / "win_x64" / "plugins" / "trucksim-gps-telemetry.dll"
+            )
+
+            result = self.invoke_installer(
+                root / "app", library_root, dll64=root / "missing-x64.dll"
+            )
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertFalse(destination.exists())
+            status = (root / "app" / "logs" / "trucksim-plugin-status.txt").read_text(
+                encoding="utf-8-sig"
+            )
+            self.assertIn("source DLL is missing or inaccessible", status)
+
     def test_wrong_architecture_source_fails_before_installing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -337,6 +399,8 @@ class TruckSimPluginInstallerTests(unittest.TestCase):
                 encoding="utf-8-sig"
             )
             self.assertIn("failed to install", status)
+            self.assertIn("close ETS2/ATS", status)
+            self.assertIn("retry", status)
 
 
 if __name__ == "__main__":

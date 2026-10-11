@@ -1,15 +1,15 @@
 # Installation
 
-## Native v1.5.4-beta
+## Native v1.5.7-beta
 
 - Windows x64; no Python runtime is required for the native desktop application.
 - A fresh install defaults to `C:\Program Files\NLSI Exclusive Logbook`. An existing installation or user-selected path is retained during upgrades.
-- Setup displays whether it detected an existing installation and, when available, its installed version before updating to v1.5.4-beta. The publisher is Nabski Logistics and Solutions Inc.
+- Setup displays whether it detected an existing installation and, when available, its installed version before updating to v1.5.7-beta. The publisher is Nabski Logistics and Solutions Inc.
 - Updates replace application files in place and retain existing configuration and logs. Existing Start Menu/Desktop shortcut options and Terms and Conditions/Privacy Policy acceptance remain available.
-- Setup automatically installs the hash-verified official TruckSim GPS x64/x86 plugin into matching architecture folders for detected Steam ETS2/ATS installations. The separate TruckSim GPS Telemetry Server GUI is not bundled, opened, or required. Different or modified existing plugin DLLs are preserved.
+- Setup automatically installs the hash-verified official TruckSim GPS x64/x86 plugin into matching architecture folders for detected Steam ETS2/ATS installations. An outdated DLL is atomically replaced; the prior DLL is preserved as a recovery copy. A locked destination or failed copy stops setup and is reported in the installer/plugin logs. The separate TruckSim GPS Telemetry Server GUI is not bundled, opened, or required.
 - If no supported ETS2/ATS game architecture is found, the application installation can still complete; the plugin helper records that no game plugin was installed in its status log. Run setup again after installing a supported game to install the plugin.
 - Setup separately installs the SCS SDK position-only `nlsi.dll` into `bin\win_x64\plugins` and `bin\win_x86\plugins` only when those game architecture folders exist. Existing `nlsi.dll` files are backed up under the application directory; uninstall restores a valid backup or removes only an unchanged managed copy.
-- The installer verifies plugin PE architecture and SHA-256 after staging/copying. A plugin helper failure is surfaced and stops setup rather than being treated as a successful install.
+- Fresh installs and updates run the same plugin setup scripts. The installer verifies packaged source architecture/hash and verifies the destination DLL hash and architecture after replacement. A plugin helper failure is surfaced and stops setup rather than being treated as a successful install.
 - The native application reads only `Local\NLSI.SCS.Position.v1` for coordinates. Missing plugins/games show unavailable position; samples older than three seconds are marked stale. XYZ are SCS world coordinates in meters, not latitude/longitude. City/country display is omitted because compatible local map lookup data is not bundled.
 - Installer-managed plugin DLLs are tracked by path and SHA-256. When replacing an unchanged installer-managed plugin, setup keeps a uniquely named `.bak` recovery copy beside the game plugin. Uninstall removes only unchanged managed copies; user-modified plugins and backup files are preserved.
 - TruckSim GPS and SCS SDK MIT license/copyright notices are installed under the application's `licenses` folder; the GPL server implementation is not distributed.
@@ -18,7 +18,8 @@
 - Completed-job records preserve their provider events and payloads. Cross-provider delivery records are merged only when job/cargo identity, event time (within five seconds), and available cargo/route fields are compatible. Empty strings do not replace known values; numeric zero and boolean false remain valid values. Cargo, route, revenue, and distance are not invented.
 - The dashboard displays `P` and hides the service-brake value only for a fresh, confirmed parking-brake `true` sample. A confirmed `false` restores the numeric service-brake value; stale or unknown state does not show `P`.
 - The native application stores TXT and `.nlsi` logs, daily raw telemetry files, events, sessions, completed/cancelled job records, and a local pending-sync queue under `%LOCALAPPDATA%\NLSI\Exclusive Logbook`. Existing install-directory `logs` and `session_logs` are copied there only when the destination file does not already exist; original files are not deleted. These per-user files are retained during updates and uninstalls.
-- The Beta has no authenticated account, backend, or upload endpoint. Synchronization remains local and Pending; the application does not send or mark records synchronized. The GitHub release checker only reads public release metadata.
+- Remote synchronization is optional. Without a key, the app starts in LOCAL MODE and telemetry, local records, history, PDF exports, and the durable sync queue remain available offline. Register a device in the website Driver Portal, then configure the HTTPS base URL and one-time 64-character hexadecimal key through **API Settings**. The key is protected with Windows DPAPI under `%LOCALAPPDATA%\NLSI\Exclusive Logbook\sync\config.dpapi`; the server stores only its SHA-256 hash. The client validates it through `/api/heartbeat.php` and sends records through `/api/ingest.php`. A revoked/invalid key disables online sync only; a temporary outage preserves records for retry. DB credentials remain on the PHP server. See [db/README.md](../db/README.md) for API, schema, XAMPP, and deployment steps.
+- Upgrade checklist: back up `%LOCALAPPDATA%\NLSI\Exclusive Logbook` and any exported PDFs first; upgrade an existing NLSI Exclusive Logbook installation in place using the same installer and keep its detected install path. The installer uses the existing AppId and `UsePreviousAppDir` policy; it does not require a key, and first launch without one remains LOCAL MODE. Configure an optional key later from **API Settings**. For rollback, close the app and reinstall the prior version to the same path; do not remove the LocalAppData folder. Restore the backup only if a rollback or repair affects user files.
 - The TruckSim GPS revision-13 map remains unchanged and does not provide current coordinates, toll fees, or ferry/train crossings. The separate SCS position provider supplies world coordinates only.
 - Setup removes the legacy `C:\nlsi-tem` application directory only when its known `config`, `data`, `logs`, and `app\test\output` user-data folders are absent; otherwise it leaves the legacy directory intact. Setup does not recreate that directory.
 - Uninstall removes the installed application and its managed shortcuts. User data stored outside the application installation directory is not targeted.
@@ -45,7 +46,7 @@ installation path during upgrades.
 - Administrator approval for installation under Program Files and game plugin folders.
 - The installer uses 64-bit install mode for the native x64 app and requests administrator privileges so it can write to Program Files and supported game plugin folders.
 
-The legacy Python telemetry installer and its game-plugin procedures below describe the earlier installer; the native v1.5.4-beta installer does not bundle that legacy agent.
+The legacy Python telemetry installer and its game-plugin procedures below describe the earlier installer; the native v1.5.7-beta installer does not bundle that legacy agent.
 
 ## Fresh installation
 

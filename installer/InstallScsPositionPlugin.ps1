@@ -224,7 +224,14 @@ foreach ($architecture in @('win_x64', 'win_x86')) {
         throw $message
     }
 }
-New-Item -ItemType Directory -Path $BackupDirectory -Force | Out-Null
+try {
+    New-Item -ItemType Directory -Path $BackupDirectory -Force | Out-Null
+}
+catch {
+    $message = "Install: could not access the SCS position plugin backup directory. Check installer permissions and retry. $($_.Exception.Message)"
+    Write-Status $message
+    throw $message
+}
 
 if ($SteamLibraryRoots -and $SteamLibraryRoots.Count -gt 0) {
     $libraries = @($SteamLibraryRoots | Where-Object {
@@ -273,24 +280,33 @@ foreach ($candidate in $destinations) {
     $architecture = [string]$candidate.architecture
     $sourceHash = [string]$sourceHashes[$architecture]
     $existingEntry = $byDestination[$destination]
+    $currentHash = ''
+    if (Test-Path -LiteralPath $destination -PathType Container) {
+        $message = "Install: SCS position plugin destination is a directory, not a DLL file: $destination"
+        Write-Status $message
+        throw $message
+    }
     if (Test-Path -LiteralPath $destination -PathType Leaf) {
-        $currentHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash
+        try {
+            $currentHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash
+        }
+        catch {
+            $message = "Install: cannot read or hash the existing $architecture SCS position plugin at $destination. Check file permissions, close ETS2/ATS and any program using the DLL, then retry. $($_.Exception.Message)"
+            Write-Status $message
+            throw $message
+        }
         if ($currentHash -ieq $sourceHash -and -not $existingEntry) {
             Write-Status "Install: preserved an identical plugin not managed by this installer: $destination"
             continue
         }
         if ($existingEntry -and $currentHash -ine [string]$existingEntry.installed_sha256) {
-            Write-Status "Install: preserved a user-modified managed plugin: $destination"
-            continue
-        }
-        if (-not $existingEntry -and $currentHash -ieq $sourceHash) {
-            continue
+            Write-Status "Install: replacing an outdated or modified managed plugin: $destination"
         }
     }
 
     $backupPath = ''
     $backupHash = ''
-    if ($existingEntry) {
+    if ($existingEntry -and (Test-Path -LiteralPath $destination -PathType Leaf) -and ($currentHash -ieq [string]$existingEntry.installed_sha256)) {
         $backupPath = [string]$existingEntry.backup_path
         $backupHash = [string]$existingEntry.backup_sha256
         if ($backupPath) {
@@ -305,13 +321,27 @@ foreach ($candidate in $destinations) {
             $destinationHash.Dispose()
         }
         $backupPath = Join-Path $BackupDirectory "$destinationKey-$([guid]::NewGuid().ToString('N')).bak"
-        [System.IO.File]::Copy($destination, $backupPath, $false)
-        $backupHash = (Get-FileHash -LiteralPath $backupPath -Algorithm SHA256).Hash
-        Write-Status "Install: backed up the existing plugin to $backupPath"
+        try {
+            [System.IO.File]::Copy($destination, $backupPath, $false)
+            $backupHash = (Get-FileHash -LiteralPath $backupPath -Algorithm SHA256).Hash
+        }
+        catch {
+            $message = "Install: could not preserve the existing SCS position plugin at $destination. Check file permissions and retry. $($_.Exception.Message)"
+            Write-Status $message
+            throw $message
+        }
+        Write-Status "Install: preserving the existing or modified plugin before replacement at $backupPath"
     }
 
     $pluginDirectory = Split-Path -Parent $destination
-    New-Item -ItemType Directory -Path $pluginDirectory -Force | Out-Null
+    try {
+        New-Item -ItemType Directory -Path $pluginDirectory -Force | Out-Null
+    }
+    catch {
+        $message = "Install: could not create or access the $architecture SCS position plugin destination directory at $pluginDirectory. Check game-folder permissions and retry. $($_.Exception.Message)"
+        Write-Status $message
+        throw $message
+    }
     $temporary = "$destination.nlsi-$([guid]::NewGuid().ToString('N')).tmp"
     $replacementBackup = "$destination.nlsi-$([guid]::NewGuid().ToString('N')).bak"
     try {
@@ -335,9 +365,19 @@ foreach ($candidate in $destinations) {
         }
     }
 
-    $installedHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash
-    if (($installedHash -ine $sourceHash) -or ((Get-PeMachine $destination) -ne $expectedMachines[$architecture])) {
-        throw "Installed SCS position plugin did not match its source: $destination"
+    try {
+        $installedHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash
+        $installedMachine = Get-PeMachine $destination
+    }
+    catch {
+        $message = "Install: could not verify the installed $architecture SCS position plugin at $destination. Check file permissions and retry. $($_.Exception.Message)"
+        Write-Status $message
+        throw $message
+    }
+    if (($installedHash -ine $sourceHash) -or ($installedMachine -ne $expectedMachines[$architecture])) {
+        $message = "Install: installed SCS position plugin failed its SHA-256 or architecture check: $destination"
+        Write-Status $message
+        throw $message
     }
     $newEntry = [pscustomobject]@{
         destination = $destination
@@ -350,6 +390,13 @@ foreach ($candidate in $destinations) {
     }
     $managedEntries.Add($newEntry)
     $byDestination[$destination] = $newEntry
-    Save-ManagedEntries $managedEntries
+    try {
+        Save-ManagedEntries $managedEntries
+    }
+    catch {
+        $message = "Install: plugin was copied and verified, but its managed-install manifest could not be saved. Check installer-directory permissions and retry. $($_.Exception.Message)"
+        Write-Status $message
+        throw $message
+    }
     Write-Status "Install: installed $architecture SCS position plugin: $destination"
 }

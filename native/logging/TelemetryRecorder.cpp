@@ -335,6 +335,219 @@ bool TelemetryRecorder::IsRunning() const {
     return running_;
 }
 
+std::vector<QJsonObject> TelemetryRecorder::PendingSyncRecords(
+    std::size_t maximum_records,
+    std::wstring* error) const {
+    std::lock_guard<std::mutex> queue_lock(sync_queue_mutex_);
+    if (maximum_records == 0) {
+        if (error) {
+            *error = L"The synchronization batch size must be greater than zero.";
+        }
+        return {};
+    }
+
+    if (!QFileInfo::exists(sync_queue_path_)) {
+        return {};
+    }
+    QFile queue(sync_queue_path_);
+    if (!queue.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        if (error) {
+            *error = QStringLiteral("Could not read local synchronization queue %1: %2")
+                .arg(sync_queue_path_, queue.errorString()).toStdWString();
+        }
+        return {};
+    }
+
+    QStringList order;
+    QSet<QString> seen;
+    QHash<QString, QString> states;
+    while (!queue.atEnd()) {
+        const QByteArray line = queue.readLine();
+        if (!line.endsWith('\n')) {
+            break;
+        }
+        QJsonObject item;
+        const QString record_id = ParseObject(line.trimmed(), &item)
+            ? item.value(QStringLiteral("record_id")).toString() : QString();
+        const QString state = item.value(QStringLiteral("state")).toString();
+        if (QUuid(record_id).isNull()
+            || (state != QStringLiteral("pending")
+                && state != QStringLiteral("syncing")
+                && state != QStringLiteral("synced")
+                && state != QStringLiteral("error"))) {
+            if (error) {
+                *error = QStringLiteral("Invalid record in local synchronization queue %1.")
+                    .arg(sync_queue_path_).toStdWString();
+            }
+            return {};
+        }
+        if (!seen.contains(record_id)) {
+            order.append(record_id);
+            seen.insert(record_id);
+        }
+        states.insert(record_id, state);
+    }
+    queue.close();
+
+    QStringList pending_ids;
+    for (const QString& record_id : order) {
+        if (states.value(record_id) != QStringLiteral("synced")
+            && pending_ids.size() < static_cast<qsizetype>(maximum_records)) {
+            pending_ids.append(record_id);
+        }
+    }
+    if (pending_ids.isEmpty()) {
+        return {};
+    }
+
+    QSet<QString> pending_set;
+    for (const QString& record_id : pending_ids) {
+        pending_set.insert(record_id);
+    }
+    QHash<QString, QJsonObject> records;
+    QDir telemetry_directory(telemetry_directory_);
+    const QFileInfoList telemetry_files = telemetry_directory.entryInfoList(
+        {QStringLiteral("*.nlsi")}, QDir::Files, QDir::Name);
+    for (const QFileInfo& info : telemetry_files) {
+        QFile telemetry_file(info.absoluteFilePath());
+        if (!telemetry_file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            if (error) {
+                *error = QStringLiteral("Could not read local telemetry file %1: %2")
+                    .arg(info.absoluteFilePath(), telemetry_file.errorString()).toStdWString();
+            }
+            return {};
+        }
+        while (!telemetry_file.atEnd()) {
+            const QByteArray line = telemetry_file.readLine();
+            if (!line.endsWith('\n')) {
+                break;
+            }
+            QJsonObject record;
+            if (!ParseObject(line.trimmed(), &record)) {
+                if (error) {
+                    *error = QStringLiteral("Malformed record in local telemetry file %1.")
+                        .arg(info.absoluteFilePath()).toStdWString();
+                }
+                return {};
+            }
+            const QString record_id = record.value(QStringLiteral("record_id")).toString();
+            if (pending_set.contains(record_id)) {
+                records.insert(record_id, record);
+            }
+        }
+    }
+
+    std::vector<QJsonObject> result;
+    result.reserve(static_cast<std::size_t>(pending_ids.size()));
+    for (const QString& record_id : pending_ids) {
+        const auto it = records.constFind(record_id);
+        if (it == records.cend()) {
+            if (error) {
+                *error = QStringLiteral(
+                    "Pending record %1 is missing from the local telemetry files; it was not acknowledged.")
+                    .arg(record_id).toStdWString();
+            }
+            return {};
+        }
+        result.push_back(it.value());
+    }
+    return result;
+}
+
+bool TelemetryRecorder::MarkSynchronized(
+    const QStringList& record_ids,
+    std::wstring* error) {
+    std::lock_guard<std::mutex> queue_lock(sync_queue_mutex_);
+    if (record_ids.isEmpty()) {
+        return true;
+    }
+    QFile queue(sync_queue_path_);
+    if (!queue.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        if (error) {
+            *error = QStringLiteral("Could not verify local synchronization queue %1: %2")
+                .arg(sync_queue_path_, queue.errorString()).toStdWString();
+        }
+        return false;
+    }
+    QHash<QString, QString> states;
+    while (!queue.atEnd()) {
+        const QByteArray line = queue.readLine();
+        if (!line.endsWith('\n')) {
+            break;
+        }
+        QJsonObject item;
+        if (!ParseObject(line.trimmed(), &item)) {
+            if (error) {
+                *error = QStringLiteral("Malformed record in local synchronization queue %1.")
+                    .arg(sync_queue_path_).toStdWString();
+            }
+            return false;
+        }
+        const QString record_id = item.value(QStringLiteral("record_id")).toString();
+        const QString state = item.value(QStringLiteral("state")).toString();
+        if (QUuid(record_id).isNull()
+            || (state != QStringLiteral("pending")
+                && state != QStringLiteral("syncing")
+                && state != QStringLiteral("synced")
+                && state != QStringLiteral("error"))) {
+            if (error) {
+                *error = QStringLiteral("Invalid record in local synchronization queue %1.")
+                    .arg(sync_queue_path_).toStdWString();
+            }
+            return false;
+        }
+        states.insert(record_id, state);
+    }
+    queue.close();
+
+    QSet<QString> unique_ids;
+    std::uint64_t newly_synced = 0;
+    QByteArray lines;
+    for (const QString& record_id : record_ids) {
+        if (QUuid(record_id).isNull() || unique_ids.contains(record_id)) {
+            if (error) {
+                *error = L"The API returned an invalid or duplicate acknowledged record ID.";
+            }
+            return false;
+        }
+        unique_ids.insert(record_id);
+        const QString state = states.value(record_id);
+        if (state.isEmpty()) {
+            if (error) {
+                *error = QStringLiteral("Acknowledged record %1 is not present in the local queue.")
+                    .arg(record_id).toStdWString();
+            }
+            return false;
+        }
+        if (state == QStringLiteral("synced")) {
+            continue;
+        }
+        const QJsonObject item{
+            {QStringLiteral("record_id"), record_id},
+            {QStringLiteral("state"), QStringLiteral("synced")},
+        };
+        lines.append(QJsonDocument(item).toJson(QJsonDocument::Compact));
+        lines.append('\n');
+        ++newly_synced;
+    }
+    if (lines.isEmpty()) {
+        return true;
+    }
+
+    QFile append_queue(sync_queue_path_);
+    if (!append_queue.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)
+        || append_queue.write(lines) != lines.size() || !append_queue.flush()) {
+        if (error) {
+            *error = QStringLiteral("Could not persist synchronization acknowledgement to %1: %2")
+                .arg(sync_queue_path_, append_queue.errorString()).toStdWString();
+        }
+        return false;
+    }
+    const std::uint64_t pending = pending_count_.load();
+    pending_count_ = pending > newly_synced ? pending - newly_synced : 0;
+    return true;
+}
+
 void TelemetryRecorder::WriteLoop() {
     if (!Recover()) {
         CloseFiles();
@@ -722,6 +935,7 @@ bool TelemetryRecorder::RecoverTelemetryFile(const std::wstring& path) {
 
 bool TelemetryRecorder::ReconcileSyncQueue(const QSet<QString>& record_ids) {
     QSet<QString> known_ids;
+    QHash<QString, QString> queue_states;
     QFile queue(sync_queue_path_);
     if (queue.exists()) {
         if (!queue.open(QIODevice::ReadWrite)) {
@@ -769,6 +983,7 @@ bool TelemetryRecorder::ReconcileSyncQueue(const QSet<QString>& record_ids) {
                 return false;
             }
             known_ids.insert(record_id);
+            queue_states.insert(record_id, state);
         }
         queue.close();
     }
@@ -781,7 +996,6 @@ bool TelemetryRecorder::ReconcileSyncQueue(const QSet<QString>& record_ids) {
             .arg(sync_queue_path_, append_queue.errorString()));
         return false;
     }
-    std::uint64_t pending = 0;
     for (const QString& record_id : record_ids) {
         if (!known_ids.contains(record_id)) {
             const QJsonObject item{
@@ -800,8 +1014,8 @@ bool TelemetryRecorder::ReconcileSyncQueue(const QSet<QString>& record_ids) {
                 pending_lines.clear();
             }
             known_ids.insert(record_id);
+            queue_states.insert(record_id, QStringLiteral("pending"));
         }
-        ++pending;
     }
     if (append_queue.isOpen()
         && (append_queue.write(pending_lines) != pending_lines.size()
@@ -809,6 +1023,12 @@ bool TelemetryRecorder::ReconcileSyncQueue(const QSet<QString>& record_ids) {
         SetError(QStringLiteral("Could not repair local synchronization queue %1: %2")
             .arg(sync_queue_path_, append_queue.errorString()));
         return false;
+    }
+    std::uint64_t pending = 0;
+    for (auto it = queue_states.cbegin(); it != queue_states.cend(); ++it) {
+        if (it.value() != QStringLiteral("synced")) {
+            ++pending;
+        }
     }
     pending_count_ = pending;
     return true;
@@ -895,7 +1115,6 @@ bool TelemetryRecorder::WriteBatch(std::vector<QueuedSample>& samples) {
     if (!AppendPendingBatch(samples)) {
         return false;
     }
-    pending_count_ += samples.size();
     return true;
 }
 
@@ -947,6 +1166,7 @@ bool TelemetryRecorder::OpenTelemetryFile(const QString& file_path) {
 }
 
 bool TelemetryRecorder::AppendPendingBatch(const std::vector<QueuedSample>& samples) {
+    std::lock_guard<std::mutex> queue_lock(sync_queue_mutex_);
     if (!sync_queue_file_.isOpen()) {
         sync_queue_file_.setFileName(sync_queue_path_);
         if (!sync_queue_file_.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
@@ -972,6 +1192,7 @@ bool TelemetryRecorder::AppendPendingBatch(const std::vector<QueuedSample>& samp
             .arg(sync_queue_path_, sync_queue_file_.errorString()));
         return false;
     }
+    pending_count_ += samples.size();
     return true;
 }
 

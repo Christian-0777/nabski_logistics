@@ -1,64 +1,87 @@
-# Telemetry and synchronization SQL design
+# Telemetry synchronization SQL schema
 
-`db/migrations/001_telemetry_sync.sql` is a versioned MySQL 8.0.16+ design
-migration created only after the source-field inventory in
-[TELEMETRY-MAPPING.md](./TELEMETRY-MAPPING.md). It has not been applied: this
-repository contains no backend, authentication, database connection, migration
-runner, or online API.
+The backend uses the existing schema-v2 native `.nlsi` JSONL records. Database
+upgrade schema changes are kept in the ordered migrations under `db/migrations/`:
 
-## Entity/field mapping
+1. `001_telemetry_sync.sql` defines the existing session, telemetry, job-record,
+   and sync-state tables.
+2. `002_preserve_native_records.sql` adds lossless storage for complete native
+   records and extends supported sync record types.
+3. `003_stable_job_ids.sql` adds nullable, case-sensitive job-ID columns and
+   indexed stable-ID queries without fabricating IDs.
+4. `004_driver_device_auth.sql` adds website driver accounts, per-device
+   SHA-256 key hashes, device audit and rate-limit tables, and authenticated
+   driver ownership on new provider records.
 
-| SQL entity/column | Local source | Notes |
-|---|---|---|
-| `driving_sessions.session_id` | `sessions.jsonl` `session_id` | Driving session only; not an authenticated-user session |
-| `game_code`, `started_at_utc`, `ended_at_utc` | `sessions.jsonl` `game`, lifecycle timestamps | UTC `DATETIME(3)` convention |
-| `telemetry_samples.record_id` | v2 `.nlsi` generated `record_id` | UUID stable across retries |
-| `record_schema_version` | v2 `.nlsi` `schema_version` | Constrained to the version-2 sample schema |
-| `session_id`, `sequence_no`, `captured_at_utc` | v2 `.nlsi` session, sequence, UTC capture timestamp | Session nullable when the game SDK session is not active/known |
-| `provider_name`, `provider_revision` | v2 `.nlsi` provider metadata | TruckSim GPS and revision 13 |
-| `source_timestamps` | v2 `.nlsi` source sample/simulation/render counters | Decimal strings preserve uint64 range; counter units are not claimed |
-| `raw_fields`, `raw_availability` | v2 `.nlsi` raw decoded source fields and validity | Individual values remain queryable as JSON |
-| `raw_mapping` | v2 `.nlsi` `raw_mapping_base64` | Base64-decode the qCompress payload; the column holds the compressed binary mapping |
-| `normalized_fields` | v2 `.nlsi` `normalized_fields` | Separate from raw values; includes normalized value, availability, source, timestamp, and stale flag |
-| `job_records.record_id`, `event_type`, `details` | Existing provider/job event and `jobs.jsonl` data | A future synchronization adapter must assign a stable record ID before transmission |
-| `sync_state` | Local durable `sync/queue.jsonl` | Server model for pending/syncing/synced/error; local alpha currently writes only pending entries |
-| Account/user columns | None | No account table or account ID is defined because no authenticated account system exists |
+For a fresh installation, import the consolidated
+`C:\xampp\htdocs\nlsi_vtc\database\nlsi_vtc_schema.sql` after selecting or
+creating a database in phpMyAdmin. It creates tables only, contains the final
+state of migrations 001-004, and seeds their version entries. Numbered
+migrations remain the upgrade source of truth. Back up the database first.
+The CLI runner
+records versions in `nlsi_schema_migrations`, skips already-applied versions,
+and checks for recognized pre-existing schema variations. It does not drop,
+truncate, reset, or automatically import data. A partially applied schema
+requires operator inspection and an appropriate backup before resuming.
 
-The migration includes session/sample/job foreign keys, UTC timestamp fields,
-unique record IDs, query indexes, JSON source payloads, and a bounded raw
-mapping. MySQL `sync_state` is a typed queue table; the service must validate
-that `record_id` exists in the table selected by `record_type` inside the same
-transaction. This polymorphic reference is documented rather than represented
-as two nullable foreign keys that would incorrectly require a record to exist
-in both tables.
+## Tables and source mapping
 
-## Applying and rolling back
+| Table | Purpose and actual source |
+|---|---|
+| `driving_sessions` | Trusted session lifecycle only: `session_id`, optional `game_code`, required `started_at_utc`, optional `ended_at_utc` and `end_reason`. Ingestion does not synthesize a session using a telemetry timestamp. |
+| `jobs` | Stable, case-sensitive `job_id` primary key. Summary times are populated only from explicit native `job.started`, `job.delivered`, or `job.cancelled` events; absent times and provider fields stay `NULL`. `created_at_utc` and `updated_at_utc` are server-maintained receipt/update times. |
+| `telemetry_samples` | Structured TruckSim GPS schema-v2 samples. Includes stable `record_id`, schema version, sequence/capture time, provider/revision, source timestamps, raw fields/availability/mapping, normalized fields, and receive time. |
+| `job_records` | Recognized native `job.started`, `job.delivered`, and `job.cancelled` events. Migration 003 adds `job_id`, populated only from a valid native ID; records without one remain unassigned. The earlier nullable `job_identity` field is retained for compatibility. |
+| `provider_records` | Added by migration 002. Stores every accepted schema-v2 telemetry sample, provider event, and provider configuration as full `payload_json`, plus identity/index columns and canonical `payload_hash`. Migration 003 adds an indexed nullable `job_id` for exact job history filtering. |
+| `sync_state` | Server-side record type, stable ID, acknowledgement state, attempts, retry time, acknowledgement time, sanitized error code, and update time. Ingestion writes `synced` in the same transaction as each accepted record. Referential validation occurs against the actual record table in that transaction. |
+| `nlsi_schema_migrations` | Migration runner ledger; records each applied migration version. |
+| `driver_accounts` | Website driver login credentials (password hashes), profile name, and active/suspended state. |
+| `driver_devices` | Driver-owned device ID, one-way key hash, status and lifecycle timestamps; plaintext keys are not retained. |
+| `driver_device_audit` | Audited provision, registration, replacement, and revocation actions. |
+| `driver_login_attempts`, `api_auth_attempts` | Hashed login/IP identifiers and request timestamps for rate limiting. |
 
-When a backend is introduced, apply this migration once in a transaction
-through its versioned migration runner after taking a database backup. Confirm
-that the database is MySQL 8.0.16+ and that JSON and enforced CHECK constraints
-are supported. Do not apply it directly from the desktop application. Verify
-all tables, indexes, constraints, UTC handling, JSON query plans, and
-sample/session/job foreign-key behavior in a disposable database before
-production deployment. Record migration version `001_telemetry_sync` in the
-backend's migration ledger.
+`provider_records.record_id` and `job_records.record_id` are unique primary
+keys. A repeated record ID with identical canonical payload hash is an
+acknowledged duplicate; reusing an ID with changed contents is rejected.
+New `provider_records` include a nullable `driver_id` resolved from the active
+device key by PHP. Legacy records remain unassigned; portal queries scope to
+the session-authenticated driver.
+Provider sequence numbers are preserved from each local queue but are not
+globally unique across devices; stable record UUIDs and canonical fingerprints
+provide idempotency. Record type enums match actual native `telemetry_sample`, `provider_event`, and
+`provider_configuration` payloads. The structured TruckSim GPS row and
+recognized job event are inserted transactionally with the complete provider
+record. Job summaries are keyed by the provider's stable ID; their details
+contain actual native JSON, while server-maintained receipt timestamps are not
+represented as game-reported start times.
 
-Rollback is a separate, destructive administrative operation and must only be
-performed after a verified database backup and an explicit retention decision.
-In reverse dependency order, drop `sync_state`, `job_records`,
-`telemetry_samples`, then `driving_sessions`. This removes server-side data;
-it does not delete or alter any local `.nlsi`, TXT, job-history, or sync-queue
-files. The application has no migration or rollback command.
+Job history is filtered/grouped by the exact case-sensitive `job_id`, then
+ordered by native `sequence_no`; job names and timestamps are not identities.
+Migration 003 backfills only values present in prior JSON payloads or
+`job_identity`. Empty, malformed, or missing IDs remain `NULL`. General
+diagnostics and pre-job records remain unassigned.
 
-## Synchronization/security status
+All `*_utc` timestamps are UTC `DATETIME(3)`. Session foreign keys are populated
+only if the referenced session already exists; otherwise the original
+`session_id` stays in the complete provider JSON and the relational column is
+`NULL`. The native queue does not provide a trusted session-start record, so
+ingestion never creates sessions from samples. Existing data is not deleted or
+rewritten to complete synchronization.
 
-No desktop API endpoint exists in this codebase. There is no claimed endpoint,
-authentication provider, server-side prepared statement, per-account
-authorization, TLS configuration, or end-to-end upload test. Consequently,
-the alpha never uploads, never calls MySQL, never stores secrets, and never
-marks a sample `synced`. Local queue records remain pending across restarts.
-An eventual service must use authenticated HTTPS, authorize every batch
-against the authenticated principal, enforce idempotency on `record_id`,
-validate payload/record sizes and schemas, use prepared statements, retry
-transient failures with bounded exponential backoff, and acknowledge only
-after durable acceptance.
+## API and acknowledgement behavior
+
+Native uploads use HTTPS `POST /api/ingest.php` below the NLSI VTC site base with
+`Authorization: Bearer <device key>`. Each incoming record is persisted in a
+PDO transaction; the API explicitly acknowledges its stable ID only after
+commit. The native client marks local records synced only when the response
+confirms the exact requested set of committed record IDs. On failure, timeout,
+partial response, or ambiguous outcome, unacknowledged `.nlsi` records and
+durable queue entries are retained for retry.
+
+## Rollback and retention
+
+There is no automatic rollback command. Migration 003 is additive but should
+not be reversed without a backup and a deliberate retention decision.
+Removing `provider_records` or reversing earlier schema migrations can destroy
+server-side history. Application upgrades and uninstall must not delete local
+`.nlsi` files, job history, logs, or the sync queue.

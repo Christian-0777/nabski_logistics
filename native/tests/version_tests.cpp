@@ -31,6 +31,7 @@
 #include "providers/ScsPositionIpc.h"
 #include "providers/ScsTelemetryEventIpc.h"
 #include "session/HistoryStore.h"
+#include "sync/SyncConfiguration.h"
 #include "telemetry/JobFuelTracker.h"
 #include "telemetry/TelemetryModel.h"
 #include "telemetry/TelemetryUiState.h"
@@ -1794,6 +1795,147 @@ void TestTelemetryRecorderPersistsProviderEventsAndConfiguration() {
         "provider records were rejected while reopening existing telemetry history");
 }
 
+void TestSyncQueueAcknowledgementIsDurableAndIdempotent() {
+    QTemporaryDir root;
+    Check(root.isValid(), "sync acknowledgement fixture directory could not be created");
+    const QJsonObject sample{
+        {QStringLiteral("timestamp_utc"), QStringLiteral("2026-10-07T08:29:02.000Z")},
+        {QStringLiteral("provider"), QStringLiteral("NLSI")},
+        {QStringLiteral("record_type"), QStringLiteral("telemetry_sample")},
+        {QStringLiteral("normalized_fields"), QJsonObject{
+            {QStringLiteral("speed_kmh"), QJsonObject{
+                {QStringLiteral("available"), true},
+                {QStringLiteral("value"), 36.0},
+            }},
+        }},
+    };
+    nlsi::logging::TelemetryRecorder recorder;
+    Check(recorder.Start(root.path().toStdWString())
+        && recorder.Enqueue(sample)
+        && recorder.Flush()
+        && recorder.PendingCount() == 1,
+        "the offline queue did not retain an unacknowledged record");
+    std::wstring error;
+    const auto pending = recorder.PendingSyncRecords(10, &error);
+    Check(error.empty() && pending.size() == 1
+        && pending.front().value(QStringLiteral("record_type")).toString()
+            == QStringLiteral("telemetry_sample"),
+        "pending records could not be resolved to their durable .nlsi payload");
+    const QString record_id = pending.front().value(QStringLiteral("record_id")).toString();
+    Check(recorder.MarkSynchronized({record_id}, &error)
+        && error.empty()
+        && recorder.PendingCount() == 0,
+        "a committed server acknowledgement was not persisted locally");
+    Check(recorder.MarkSynchronized({record_id}, &error)
+        && recorder.PendingCount() == 0,
+        "repeated acknowledgement changed queue state or failed idempotently");
+    Check(recorder.StopFor(std::chrono::seconds(5)),
+        "sync acknowledgement fixture did not stop cleanly");
+
+    nlsi::logging::TelemetryRecorder recovered;
+    Check(recovered.Start(root.path().toStdWString())
+        && recovered.Flush()
+        && recovered.PendingCount() == 0,
+        "a synced record became pending again after application restart");
+    error.clear();
+    Check(recovered.PendingSyncRecords(10, &error).empty() && error.empty(),
+        "a synchronized local record was offered for upload after restart");
+    Check(recovered.StopFor(std::chrono::seconds(5)),
+        "sync queue recovery fixture did not stop cleanly");
+}
+
+void TestProtectedSyncConfiguration() {
+    QTemporaryDir root;
+    Check(root.isValid(), "protected sync configuration fixture directory could not be created");
+    const QString key(64, QLatin1Char('a'));
+    const nlsi::sync::SyncConfiguration configuration{
+        QStringLiteral("https://sync.example.test/db"),
+        key,
+        QStringLiteral("2026-10-11T12:00:00.000Z"),
+    };
+    Check(nlsi::sync::SyncConfigurationStore::IsValidApiBaseUrl(configuration.api_base_url)
+        && !nlsi::sync::SyncConfigurationStore::IsValidApiBaseUrl(
+            QStringLiteral("http://sync.example.test/db"))
+        && nlsi::sync::SyncConfigurationStore::IsValidDeviceApiKey(key)
+        && !nlsi::sync::SyncConfigurationStore::IsValidDeviceApiKey(
+            QStringLiteral("CHANGE_ME")),
+        "sync configuration accepts HTTPS URLs and legacy hexadecimal keys");
+    Check(nlsi::sync::SyncConfigurationStore::IsValidDeviceApiKey(
+              QStringLiteral("AbC123xYz789"))
+        && !nlsi::sync::SyncConfigurationStore::IsValidDeviceApiKey(
+            QStringLiteral("AbC123xYz78!")),
+        "sync configuration accepts schema-managed twelve-character driver keys");
+    QString error;
+    Check(nlsi::sync::SyncConfigurationStore::Save(root.path(), configuration, &error)
+        && error.isEmpty(),
+        "sync settings could not be protected and saved with Windows DPAPI");
+    QFile protected_file(QDir(root.path()).filePath(QStringLiteral("sync/config.dpapi")));
+    Check(protected_file.open(QIODevice::ReadOnly),
+        "protected sync settings file could not be read for verification");
+    const QByteArray encrypted = protected_file.readAll();
+    protected_file.close();
+    Check(!encrypted.contains(key.toLatin1())
+        && !encrypted.contains(configuration.api_base_url.toUtf8()),
+        "stored sync settings contain plaintext credentials or endpoint data");
+
+    nlsi::sync::SyncConfiguration loaded;
+    Check(nlsi::sync::SyncConfigurationStore::Load(root.path(), &loaded, &error)
+        && error.isEmpty()
+        && loaded.api_base_url == configuration.api_base_url
+        && loaded.device_api_key == configuration.device_api_key
+        && loaded.last_successful_sync == configuration.last_successful_sync,
+        "DPAPI-protected sync configuration did not round-trip for the current user");
+
+    const nlsi::sync::DriverKeyConfiguration driver_configuration{
+        QStringLiteral("https://portal.example.test/nlsi_vtc"),
+        QStringLiteral("AbC123xYz789"),
+    };
+    Check(nlsi::sync::SyncConfigurationStore::IsValidDriverKey(
+              driver_configuration.driver_key)
+        && !nlsi::sync::SyncConfigurationStore::IsValidDriverKey(
+            QStringLiteral("AbC123xYz78!"))
+        && !nlsi::sync::SyncConfigurationStore::IsValidDriverKey(
+            QStringLiteral("AbC123xYz78")),
+        "driver keys accept only twelve alphanumeric characters");
+    const QString telemetry_path = QDir(root.path()).filePath(
+        QStringLiteral("telemetry/2026-10-11.nlsi"));
+    Check(QDir().mkpath(QFileInfo(telemetry_path).absolutePath()),
+        "driver-key storage preservation fixture directory could not be created");
+    QFile existing_telemetry(telemetry_path);
+    Check(existing_telemetry.open(QIODevice::WriteOnly)
+        && existing_telemetry.write("existing telemetry data\n") > 0,
+        "existing telemetry fixture could not be written");
+    existing_telemetry.close();
+    Check(nlsi::sync::SyncConfigurationStore::SaveDriverKey(
+              root.path(), driver_configuration, &error)
+        && error.isEmpty(),
+        "driver key could not be encrypted and saved with Windows DPAPI");
+    QFile driver_key_file(QDir(root.path()).filePath(
+        QStringLiteral("sync/driver-key.dpapi")));
+    Check(driver_key_file.open(QIODevice::ReadOnly),
+        "DPAPI-protected driver key file could not be read for verification");
+    const QByteArray encrypted_driver_key = driver_key_file.readAll();
+    driver_key_file.close();
+    Check(!encrypted_driver_key.contains(driver_configuration.driver_key.toLatin1())
+        && !encrypted_driver_key.contains(driver_configuration.website_api_base_url.toUtf8()),
+        "protected driver key settings contain plaintext key or endpoint data");
+    nlsi::sync::DriverKeyConfiguration loaded_driver_configuration;
+    Check(nlsi::sync::SyncConfigurationStore::LoadDriverKey(
+              root.path(), &loaded_driver_configuration, &error)
+        && error.isEmpty()
+        && loaded_driver_configuration.website_api_base_url
+            == driver_configuration.website_api_base_url
+        && loaded_driver_configuration.driver_key == driver_configuration.driver_key,
+        "DPAPI-protected driver key settings did not reload for the current user");
+    Check(existing_telemetry.open(QIODevice::ReadOnly)
+        && existing_telemetry.readAll() == "existing telemetry data\n",
+        "saving driver-key settings changed the existing telemetry .nlsi file");
+    existing_telemetry.close();
+    Check(nlsi::sync::SyncConfigurationStore::ClearDriverKey(root.path(), &error)
+        && !QFile::exists(driver_key_file.fileName()),
+        "saved driver key could not be cleared without removing telemetry");
+}
+
 } // namespace
 
 int main() {
@@ -1825,6 +1967,9 @@ int main() {
             TestCrossProviderCompletedJobCorrelationAndValuePreservation},
         {"provider event and configuration telemetry persistence",
             TestTelemetryRecorderPersistsProviderEventsAndConfiguration},
+        {"durable sync acknowledgement and restart recovery",
+            TestSyncQueueAcknowledgementIsDurableAndIdempotent},
+        {"DPAPI-protected sync configuration", TestProtectedSyncConfiguration},
         {"version comparison", TestVersionComparison},
     };
     try {

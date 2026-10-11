@@ -1,5 +1,6 @@
 import shutil
 import hashlib
+import json
 import struct
 import subprocess
 import tempfile
@@ -10,6 +11,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER_SCRIPT = ROOT / "installer" / "InstallScsPositionPlugin.ps1"
 POWERSHELL = shutil.which("powershell.exe")
+VERSION_METADATA = json.loads((ROOT / "version.json").read_text(encoding="utf-8"))
+CHANNEL = str(VERSION_METADATA["channel"]).lower()
+RELEASE_TAG = (
+    f"v{VERSION_METADATA['version']}"
+    if CHANNEL == "stable"
+    else f"v{VERSION_METADATA['version']}-{CHANNEL}"
+)
 
 
 def write_pe_plugin(path: Path, machine: int, marker: bytes) -> None:
@@ -140,8 +148,40 @@ class ScsPositionInstallerTests(unittest.TestCase):
             self.assertIn("source DLL is missing", status)
             self.assertFalse((app_root / "tools" / "installed-scs-position-plugins.json").exists())
 
+    def test_wrong_architecture_source_fails_without_installing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            app_root = root / "app"
+            library_root = root / "SteamLibrary"
+            destination = (
+                library_root / "steamapps" / "common" / "Euro Truck Simulator 2"
+                / "bin" / "win_x86" / "plugins" / "nlsi.dll"
+            )
+            destination.parent.mkdir(parents=True)
+            dll64 = root / "payload-x64.dll"
+            write_pe_plugin(dll64, 0x8664, b"wrong architecture for x86")
+
+            result = self.invoke_installer(app_root, library_root, dll64, dll64)
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertFalse(destination.exists())
+            status = (app_root / "logs" / "scs-position-plugin-status.txt").read_text(
+                encoding="utf-8-sig"
+            )
+            self.assertIn("wrong PE architecture", status)
+
+    @unittest.skipUnless(
+        all(
+            path.is_file()
+            for path in (
+                ROOT / "build" / "plugins" / RELEASE_TAG / "win_x64" / "nlsi.dll",
+                ROOT / "build" / "plugins" / RELEASE_TAG / "win_x86" / "nlsi.dll",
+            )
+        ),
+        "Version-scoped SCS release binaries have not been built",
+    )
     def test_release_binaries_install_to_matching_game_architecture_paths(self) -> None:
-        release_root = ROOT / "build" / "plugins" / "v1.5.4-beta"
+        release_root = ROOT / "build" / "plugins" / RELEASE_TAG
         dll64 = release_root / "win_x64" / "nlsi.dll"
         dll32 = release_root / "win_x86" / "nlsi.dll"
         self.assertTrue(dll64.is_file(), str(dll64))
@@ -199,12 +239,32 @@ class ScsPositionInstallerTests(unittest.TestCase):
             self.assertEqual(0, installed.returncode, installed.stderr)
             self.assertEqual(dll64.read_bytes(), plugin_x64.read_bytes())
             self.assertEqual(dll32.read_bytes(), plugin_x86.read_bytes())
-            manifest = (app_root / "tools" / "installed-scs-position-plugins.json").read_text(
-                encoding="utf-8-sig"
+            manifest_path = app_root / "tools" / "installed-scs-position-plugins.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+            self.assertEqual(
+                hashlib.sha256(dll64.read_bytes()).hexdigest().upper(),
+                next(item["installed_sha256"] for item in manifest["plugins"]
+                     if item["destination"] == str(plugin_x64)),
             )
-            self.assertIn("backup_path", manifest)
-            self.assertIn(hashlib.sha256(plugin_x64.read_bytes()).hexdigest().upper(), manifest)
-            self.assertIn(hashlib.sha256(plugin_x86.read_bytes()).hexdigest().upper(), manifest)
+            self.assertEqual(
+                hashlib.sha256(dll32.read_bytes()).hexdigest().upper(),
+                next(item["installed_sha256"] for item in manifest["plugins"]
+                     if item["destination"] == str(plugin_x86)),
+            )
+            for plugin, original in (
+                (plugin_x64, b"preexisting x64 nlsi"),
+                (plugin_x86, b"preexisting x86 nlsi"),
+            ):
+                entry = next(
+                    item for item in manifest["plugins"]
+                    if item["destination"] == str(plugin)
+                )
+                backup = Path(entry["backup_path"])
+                self.assertEqual(original, backup.read_bytes())
+                self.assertEqual(
+                    hashlib.sha256(original).hexdigest().upper(),
+                    entry["backup_sha256"],
+                )
 
             write_pe_plugin(dll64, 0x8664, b"upgraded x64 nlsi")
             write_pe_plugin(dll32, 0x014C, b"upgraded x86 nlsi")
@@ -261,6 +321,7 @@ class ScsPositionInstallerTests(unittest.TestCase):
                 encoding="utf-8-sig"
             )
             self.assertIn("Close ETS2/ATS and retry", status)
+            self.assertIn("failed to replace", status)
 
     def test_ats_and_both_games_receive_matching_architecture_payloads(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -269,8 +330,8 @@ class ScsPositionInstallerTests(unittest.TestCase):
             library_root = root / "SteamLibrary"
             dll64 = root / "payload-x64.dll"
             dll32 = root / "payload-x86.dll"
-            write_pe_plugin(dll64, 0x8664, b"1.5.4-beta x64")
-            write_pe_plugin(dll32, 0x014C, b"1.5.4-beta x86")
+            write_pe_plugin(dll64, 0x8664, f"{RELEASE_TAG} x64".encode("ascii"))
+            write_pe_plugin(dll32, 0x014C, f"{RELEASE_TAG} x86".encode("ascii"))
             games = ("Euro Truck Simulator 2", "American Truck Simulator")
             destinations = []
             for game in games:

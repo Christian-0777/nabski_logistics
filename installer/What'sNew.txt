@@ -1,6 +1,8 @@
-NLSI Exclusive Logbook v1.4.4-beta has been installed.
+NLSI Exclusive Logbook v1.5.9-beta
 
 What's New
+- Create and submit an explicitly marked demo delivery through the existing local record and authenticated API synchronization pipeline.
+- Keep Enter Your Key and Sync Now in Settings > Connect; remove the redundant Configure Sync control.
 - Automatically fit all Dashboard cards to responsive widths and show current-position availability with the active-job destination.
 - Read active Workshop mods from the ETS2/ATS game logs in Documents, with metadata, Workshop source links, and optional Steam preview thumbnails.
 - Show only exact ferry, train, and paid-toll telemetry events; repeated records are collapsed and unrecorded fees remain unavailable.
@@ -9,13 +11,21 @@ What's New
 - Preserve the 900x600 minimum window, NLSI light pink/white styling, local data, and existing telemetry compatibility.
 - Record raw TruckSim GPS revision-13 samples in daily, versioned .nlsi JSON Lines files.
 - Preserve each complete shared-memory sample and store raw availability separately from normalized values.
-- Keep telemetry records and their Pending synchronization queue on this computer; no gameplay upload service is configured.
+- Keep telemetry records and their Pending synchronization queue recoverable locally while adding optional HTTPS synchronization to the configured PHP API.
+- Configure the API endpoint and device credential in the desktop app; the credential is protected with Windows DPAPI in the current user's LocalAppData.
+- Add optional website-managed per-device API keys; the PHP API resolves driver ownership and stores only key hashes.
+- Generate or rotate a separate 12-character driver key from the authenticated website profile; rotated keys stop validating immediately.
+- Optionally enter a driver key in the application, validate it over HTTPS, and save it with current-user Windows DPAPI without changing telemetry .nlsi records.
+- Find Enter Your Key and Sync Now together in Settings > Connect.
+- Keep native LOCAL MODE fully operational without an account or key; save configured credentials with current-user DPAPI.
+- Distinguish invalid/revoked credentials from API outages and retain queued records for retry.
 - Preserve existing .nlsi/TXT logs, history, and user data during upgrades and uninstall.
-- The About page shows the current application version: v1.4.4-beta (Beta).
+- The About page shows the current application version: v1.5.9-beta (Beta).
 - The SCS SDK position-only plugin supplies in-game XYZ coordinates over its own versioned IPC mapping.
 - Existing TruckSim GPS revision-13 fields, mapping, and job/session data remain unchanged.
-- Existing nlsi.dll files are backed up before replacement and restored or removed only when the installed plugin remains unchanged.
-- Live ETS2/ATS telemetry, live GitHub checks, live Steam previews, and actual game-folder installation have not been tested for this release.
+- Fresh install and upgrade both install and verify the architecture-matched packaged game plugin DLL; existing plugin files are backed up before replacement.
+- A running game, locked DLL, missing source or destination, architecture mismatch, or failed post-install hash check is reported as an installation failure with a safe retry instruction.
+- A release build, live API/database deployment, and actual game-folder installation must not be assumed from source or unit tests alone.
 
 WHAT'S NEW
 

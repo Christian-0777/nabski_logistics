@@ -12,6 +12,7 @@
 class QStackedWidget;
 class QScrollArea;
 class QToolButton;
+class QPushButton;
 class QTimer;
 class QLabel;
 class QCloseEvent;
@@ -43,6 +44,9 @@ private:
     QLabel* active_page_title_ = nullptr;
     QLabel* header_clock_ = nullptr;
     QLabel* connection_indicator_ = nullptr;
+    QPushButton* sync_now_button_ = nullptr;
+    QPushButton* enter_driver_key_button_ = nullptr;
+    QPushButton* send_demo_button_ = nullptr;
     QHash<QString, StatePage*> pages_;
     QHash<QString, QToolButton*> navigation_buttons_;
     QTimer* refresh_timer_ = nullptr;

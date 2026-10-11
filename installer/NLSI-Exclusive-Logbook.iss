@@ -3,17 +3,17 @@
 #define AppChannel "beta"
 #endif
 #ifndef AppFileVersion
-#define AppFileVersion 1.5.4.0
+#define AppFileVersion 1.5.9.0
 #endif
 #ifndef ReleaseLabel
-#define ReleaseLabel "1.5.4-beta"
+#define ReleaseLabel "1.5.9-beta"
 #endif
 #define DefaultApplicationDir "C:\Program Files\NLSI Exclusive Logbook"
 #ifndef ReleaseTag
-#define ReleaseTag "v1.5.4-beta"
+#define ReleaseTag "v1.5.9-beta"
 #endif
 #ifndef ReleasePayload
-#define ReleasePayload "build\intermediate\installer-payload-v1.5.4-beta"
+#define ReleasePayload "build\intermediate\installer-payload-v1.5.9-beta"
 #endif
 #define AppPublisher "Nabski Logistics and Solutions Inc."
 #define AppURL "https://github.com/Christian-0777/nlsi_telemetry"
@@ -513,12 +513,12 @@ begin
       'NEW VERSION: V{#ReleaseLabel}' + #13#10 +
       'INSTALLATION DIRECTORY: ' + ExistingInstallDir + #13#10#13#10 +
       'EXISTING CONFIGURATION AND LOG FILES WILL BE PRESERVED.' + #13#10#13#10 +
-      'SETUP DETECTS SUPPORTED STEAM ETS2/ATS INSTALLATIONS AND INSTALLS THE TRUCKSIM GPS PLUGIN AND THE SEPARATE SCS POSITION PLUGIN WHERE SUPPORTED. DIFFERENT EXISTING PLUGIN DLLS ARE PRESERVED, AND ANY EXISTING NLSI.DLL IS BACKED UP FOR RESTORATION.';
+      'SETUP DETECTS SUPPORTED STEAM ETS2/ATS INSTALLATIONS AND RUNS THE VERIFIED TRUCKSIM GPS AND SCS POSITION PLUGIN INSTALLERS. OUTDATED PLUGINS ARE REPLACED, AND EXISTING FILES ARE PRESERVED IN BACKUPS WHEN NEEDED.';
   end else begin
     InstallationSummary :=
       'NO VALID NLSI EXCLUSIVE LOGBOOK INSTALLATION WAS DETECTED.' + #13#10#13#10 +
       'THIS SETUP WILL PERFORM A FRESH INSTALLATION OF V{#ReleaseLabel} UNDER {#DefaultApplicationDir}.' + #13#10#13#10 +
-      'SETUP DETECTS SUPPORTED STEAM ETS2/ATS INSTALLATIONS AND INSTALLS THE TRUCKSIM GPS PLUGIN AND THE SEPARATE SCS POSITION PLUGIN WHERE SUPPORTED. DIFFERENT EXISTING PLUGIN DLLS ARE PRESERVED, AND ANY EXISTING NLSI.DLL IS BACKED UP FOR RESTORATION.';
+      'SETUP DETECTS SUPPORTED STEAM ETS2/ATS INSTALLATIONS AND RUNS THE VERIFIED TRUCKSIM GPS AND SCS POSITION PLUGIN INSTALLERS. OUTDATED PLUGINS ARE REPLACED, AND EXISTING FILES ARE PRESERVED IN BACKUPS WHEN NEEDED.';
   end;
   if DirExists(ExpandConstant('{#LegacyDirectory}')) then
     InstallationSummary := InstallationSummary + #13#10#13#10 +
@@ -584,7 +584,8 @@ begin
       'NLSI Exclusive Logbook v{#ReleaseLabel} has been installed.' + #13#10#13#10 +
       'What''s New' + #13#10 +
       '- Direct TruckSim GPS revision-13 telemetry; the separate server client is not required.' + #13#10 +
-      '- Capture complete revision-13 raw samples with local-only, pending synchronization records; no online service is configured.' + #13#10 +
+      '- Capture complete revision-13 raw samples with local storage and optional website-managed HTTPS synchronization.' + #13#10 +
+      '- LOCAL MODE works without a device key; pending records are retained through temporary outages.' + #13#10 +
       '- Local events, jobs, sessions, existing .nlsi logs, and TXT logs remain supported.' + #13#10 +
       '- Setup installs the verified TruckSim GPS plugin separately from the SCS SDK position-only nlsi.dll plugin.' + #13#10 +
       '- The SCS plugin publishes only ETS2/ATS world coordinates over its own versioned IPC mapping.' + #13#10#13#10 +

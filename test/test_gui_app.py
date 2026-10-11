@@ -36,11 +36,11 @@ class GuiDataTests(unittest.TestCase):
                 now=1.0,
             )
             snapshot = make_snapshot(agent, None, "Listening")
-            self.assertEqual("1.5.4", app_version())
+            self.assertEqual("1.5.9", app_version())
             self.assertEqual("NLSI Exclusive Logbook", app_product())
             self.assertEqual("beta", app_channel())
-            self.assertEqual("Beta v1.5.4", app_release_label())
-            self.assertEqual("1.5.4", snapshot["application_version"])
+            self.assertEqual("Beta v1.5.9", app_release_label())
+            self.assertEqual("1.5.9", snapshot["application_version"])
             self.assertEqual("1.01", snapshot["telemetry_api_version"])
             agent.close()
 
@@ -108,7 +108,7 @@ class GuiDataTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             env_path = Path(temp_dir) / ".env"
             env_path.write_text(
-                "NLSI_API_KEY=super-secret-value\nSOCIAL_DISCORD_URL=https://example.test/community\n",
+                "UNUSED_PRIVATE_TOKEN=super-secret-value\nSOCIAL_DISCORD_URL=https://example.test/community\n",
                 encoding="utf-8",
             )
             values = parse_env_urls((env_path,))

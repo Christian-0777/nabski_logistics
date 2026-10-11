@@ -1,6 +1,6 @@
 # Telemetry mapping and availability
 
-## Native Qt application v1.5.3 Beta
+## Native Qt application v1.5.7 Beta
 
 The native app reads the official TruckSim GPS plugin's 32 KiB `Local\TSGPSTelemetry` map (revision 13) directly; it does not use the separate TruckSim GPS Telemetry Server. It also reads NLSI SCS SDK configuration and gameplay events from the versioned IPC provided by `nlsi.dll`, and accepts legacy NLSI UDP telemetry when available. Fresh live values are merged only when provider game identities match; missing or stale preferred values may be filled from fresh matching data, while conflicting game identities are not merged. Per-record timestamps and provider names are retained in local logs.
 

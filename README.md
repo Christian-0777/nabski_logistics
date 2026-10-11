@@ -1,6 +1,6 @@
 # NLSI Exclusive Logbook
 
-NLSI Exclusive Logbook is a native Windows desktop telemetry and logging application for Euro Truck Simulator 2 (ETS2) and American Truck Simulator (ATS). Version 1.5.3-beta is built with C++ and Qt 6 Widgets. The existing Python implementation is retained as reference-only code and is not part of the active native telemetry pipeline.
+NLSI Exclusive Logbook is a native Windows desktop telemetry and logging application for Euro Truck Simulator 2 (ETS2) and American Truck Simulator (ATS). Version 1.5.7-beta is built with C++ and Qt 6 Widgets. The existing Python implementation is retained as reference-only code and is not part of the active native telemetry pipeline.
 
 ## What It Does
 
@@ -13,6 +13,7 @@ NLSI Exclusive Logbook is a native Windows desktop telemetry and logging applica
 - Reads active Workshop mods from ETS2/ATS game logs in Documents and links to valid Steam Workshop item pages.
 - Records telemetry samples, source metadata, normalized values, and the complete shared-memory mapping in versioned v2 `.nlsi` telemetry files.
 - Preserves application logs, events, session history, and job history locally.
+- Synchronizes durable local records through the website-managed per-device PHP API when configured; without a key the app remains fully usable in local mode, and unacknowledged records remain queued across restarts.
 - Uses explicit unavailable states for unsupported or invalid telemetry values.
 - Supports offline recording without requiring a remote server or internet connection.
 - Provides local history, event inspection, and PDF export for completed jobs.
@@ -32,7 +33,7 @@ Plugin binaries and SDK components remain subject to their applicable licenses. 
 ## Current Release
 
 - **Product:** NLSI Exclusive Logbook
-- **Version:** v1.5.3-beta
+- **Version:** v1.5.7-beta
 - **Release channel:** Beta
 - **Supported games:** ETS2 and ATS
 - **Technology:** C++, Qt 6 Widgets, CMake
@@ -180,15 +181,26 @@ For record structures, recovery rules, and inspection instructions, see:
 
 ## Offline Operation and Synchronization Status
 
-**Remote synchronization is not implemented unless a separate, verified implementation is added to the application.**
+Remote synchronization is optional and uses the authenticated HTTPS PHP API under
+`db/api/`. The desktop application never connects directly to MySQL. Without API
+settings, local telemetry, history, exports, and queued records remain usable;
+sync status reports that it is not configured. Configure the deployed API base
+URL and revocable device key in **API Settings**. The desktop copy is protected
+with Windows DPAPI, while the server-side key and database credentials belong in
+the backend's ignored `db/.env` file.
 
-The local application does not upload telemetry to a website or cloud service, connect directly to MySQL, or mark records as remotely synchronized merely because they are queued.
+Uploads are idempotent and records remain in the local queue until the API
+explicitly acknowledges committed record IDs. Transient, failed, and ambiguous
+responses do not discard unacknowledged records. The backend provides a
+versioned migration runner, but migrations are never applied automatically by
+the desktop application; back up and review the existing database before
+applying any migration.
 
-The repository contains a proposed SQL migration at `db/migrations/001_telemetry_sync.sql`. This is a database design artifact and has not been applied. A proposed schema does not constitute a working backend, authentication provider, migration runner, or telemetry upload API.
-
-A future synchronization service must use authenticated HTTPS, enforce record ownership and authorization, validate payloads, support idempotent uploads, and acknowledge records only after durable server-side acceptance.
-
-See [SQL Schema Design](docs/SQL-SCHEMA.md) for the proposed database mapping, validation requirements, and rollback procedure.
+The source implementation does not establish that a particular live database,
+HTTPS tunnel, or deployment route is configured or that end-to-end sync has
+been exercised. See [PHP backend setup](db/README.md) and
+[SQL schema and migration notes](docs/SQL-SCHEMA.md) for the actual routes,
+schema, deployment, and recovery requirements.
 
 ## Telemetry Limitations
 

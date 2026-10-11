@@ -381,11 +381,27 @@ SettingsPage::SettingsPage(QWidget* parent) : StatePage(parent) {
     providers_ = new ProvidersPage(tabs_);
     telemetry_ = new TelemetryPage(tabs_);
     active_mods_ = new ActiveModsPage(tabs_);
+    connect_page_ = new QWidget(tabs_);
+    connect_page_->setObjectName(QStringLiteral("connectSettingsPage"));
+    auto* connect_layout = new QVBoxLayout(connect_page_);
+    connect_layout->setContentsMargins(12, 12, 12, 12);
+    connect_layout->setSpacing(14);
+    connect_controls_layout_ = new QHBoxLayout();
+    connect_controls_layout_->setSpacing(10);
+    connect_layout->addLayout(connect_controls_layout_);
+    connect_layout->addStretch(1);
     tabs_->addTab(application_settings_, QStringLiteral("APPLICATION"));
     tabs_->addTab(providers_, QStringLiteral("PROVIDERS"));
     tabs_->addTab(telemetry_, QStringLiteral("TELEMETRY"));
     tabs_->addTab(active_mods_, QStringLiteral("ACTIVE MODS"));
+    tabs_->addTab(connect_page_, QStringLiteral("CONNECT"));
     layout->addWidget(tabs_, 1);
+}
+
+void SettingsPage::AddConnectControl(QWidget* control) {
+    if (control) {
+        connect_controls_layout_->addWidget(control);
+    }
 }
 
 void SettingsPage::UpdateState(const telemetry::TelemetryUiState& state) {

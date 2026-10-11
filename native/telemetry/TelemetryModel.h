@@ -104,6 +104,14 @@ struct ProviderStatus {
     std::wstring last_error;
     std::wstring storage_error;
     std::wstring sync_state = L"Offline; no authenticated API configured";
+    std::uint64_t sync_pending_count = 0;
+    bool api_connected = false;
+    bool sync_configured = false;
+    bool sync_in_progress = false;
+    std::wstring last_api_check;
+    std::wstring last_successful_sync;
+    std::wstring last_sync_attempt;
+    std::wstring sync_error;
     std::wstring trucksim_stage = L"Not checked";
     std::wstring trucksim_layout = L"Unknown";
     std::wstring trucksim_mapping_name = L"Local\\TSGPSTelemetry";

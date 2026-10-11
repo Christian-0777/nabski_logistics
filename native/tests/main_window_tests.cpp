@@ -1481,7 +1481,55 @@ bool TestMeasurementUnitConversionsAndSettings() {
     nlsi::gui::SetMeasurementSystem(nlsi::gui::MeasurementSystem::Metric);
     nlsi::telemetry::TelemetryCore telemetry_core;
     nlsi::gui::MainWindow window(
-        L"NLSI Exclusive Logbook", L"v1.5.4-beta", telemetry_core);
+        L"NLSI Exclusive Logbook", L"v1.5.9-beta", telemetry_core);
+    QTabWidget* settings_tabs = nullptr;
+    for (QTabWidget* tabs : window.findChildren<QTabWidget*>()) {
+        if (tabs->count() == 5
+            && tabs->tabText(0) == QStringLiteral("APPLICATION")
+            && tabs->tabText(1) == QStringLiteral("PROVIDERS")
+            && tabs->tabText(2) == QStringLiteral("TELEMETRY")
+            && tabs->tabText(3) == QStringLiteral("ACTIVE MODS")
+            && tabs->tabText(4) == QStringLiteral("CONNECT")) {
+            settings_tabs = tabs;
+            break;
+        }
+    }
+    if (!settings_tabs
+        || settings_tabs->tabText(0) != QStringLiteral("APPLICATION")
+        || settings_tabs->tabText(1) != QStringLiteral("PROVIDERS")
+        || settings_tabs->tabText(2) != QStringLiteral("TELEMETRY")
+        || settings_tabs->tabText(3) != QStringLiteral("ACTIVE MODS")
+        || settings_tabs->tabText(4) != QStringLiteral("CONNECT")) {
+        std::cerr << "Settings does not retain its existing tabs and add Connect.\n";
+        return false;
+    }
+    QWidget* connect_page = settings_tabs->widget(4);
+    QPushButton* enter_driver_key = window.findChild<QPushButton*>(
+        QStringLiteral("enterDriverKeyButton"));
+    QPushButton* sync_now = window.findChild<QPushButton*>(
+        QStringLiteral("syncNowButton"));
+    QPushButton* configure_sync = window.findChild<QPushButton*>(
+        QStringLiteral("configureSyncButton"));
+    QPushButton* send_demo = window.findChild<QPushButton*>(
+        QStringLiteral("sendDemoButton"));
+    if (!connect_page || !enter_driver_key
+        || enter_driver_key->text() != QStringLiteral("ENTER YOUR KEY")
+        || !connect_page->isAncestorOf(enter_driver_key)
+        || !sync_now || sync_now->text() != QStringLiteral("SYNC NOW")
+        || !connect_page->isAncestorOf(sync_now)
+        || configure_sync
+        || !send_demo || send_demo->text() != QStringLiteral("Send Demo")
+        || !connect_page->isAncestorOf(send_demo)) {
+        std::cerr << "Connect does not expose the intended key, sync, and demo controls.\n";
+        return false;
+    }
+    for (QPushButton* button : window.findChildren<QPushButton*>()) {
+        if (button->text() == QStringLiteral("API KEY")
+            || button->text() == QStringLiteral("API SETTINGS")) {
+            std::cerr << "The API Key/API Settings button is still present.\n";
+            return false;
+        }
+    }
     QComboBox* selector = window.findChild<QComboBox*>(
         QStringLiteral("measurementSystemSelector"));
     if (!selector || selector->count() != 2
@@ -1857,7 +1905,7 @@ bool TestSingleInstanceGuard(QApplication& application) {
 
 bool TestOfflineUpdateCheck() {
     nlsi::updater::GitHubUpdater updater(
-        QStringLiteral("1.5.4-beta"),
+        QStringLiteral("1.5.9-beta"),
         nullptr,
         QUrl(QStringLiteral("http://127.0.0.1:1/releases")));
     QEventLoop loop;
@@ -1885,6 +1933,123 @@ bool TestOfflineUpdateCheck() {
     return true;
 }
 
+bool TestSendDemoDelivery() {
+    QTemporaryDir user_data;
+    if (!user_data.isValid()) {
+        std::cerr << "Could not create isolated demo-delivery storage.\n";
+        return false;
+    }
+
+    nlsi::telemetry::TelemetryCore telemetry_core;
+    if (!telemetry_core.Initialize(user_data.path().toStdWString())) {
+        std::cerr << "Telemetry core could not initialize for the demo-delivery test.\n";
+        return false;
+    }
+    QString error;
+    const bool created = telemetry_core.CreateDemoDelivery(&error);
+    const nlsi::session::HistorySnapshot history = telemetry_core.History();
+    const bool flushed = telemetry_core.FlushLocalWrites(std::chrono::seconds(5));
+    const std::uint64_t pending_records = telemetry_core.Status().sync_pending_count;
+    telemetry_core.Shutdown();
+    if (!created || !flushed) {
+        std::cerr << "Demo delivery failed to persist locally: "
+                  << error.toStdString() << '\n';
+        return false;
+    }
+    if (pending_records < 2) {
+        std::cerr << "Demo records were not retained in the local sync queue.\n";
+        return false;
+    }
+
+    QString demo_job_id;
+    bool found_start = false;
+    bool found_delivery = false;
+    for (const auto& event : history.events) {
+        QJsonParseError parse_error;
+        const QJsonDocument document = QJsonDocument::fromJson(
+            event.details.toUtf8(), &parse_error);
+        if (parse_error.error != QJsonParseError::NoError || !document.isObject()) {
+            continue;
+        }
+        const QJsonObject data = document.object().value(QStringLiteral("data")).toObject();
+        const QString job_id = data.value(QStringLiteral("job_id")).toString();
+        if (!job_id.startsWith(QStringLiteral("demo-"))
+            || !data.value(QStringLiteral("demo")).toBool()
+            || !data.value(QStringLiteral("test_data")).toBool()) {
+            continue;
+        }
+        demo_job_id = job_id;
+        found_start = found_start || event.type == QStringLiteral("job.started");
+        found_delivery = found_delivery || event.type == QStringLiteral("job.delivered");
+        if (data.value(QStringLiteral("driver_name")).toString()
+                != QStringLiteral("DEMO DRIVER (TEST DATA)")
+            || data.value(QStringLiteral("truck")).toString()
+                != QStringLiteral("DEMO Volvo FH16 (TEST DATA)")
+            || data.value(QStringLiteral("cargo")).toString()
+                != QStringLiteral("Demo Cargo - TEST DATA")
+            || data.value(QStringLiteral("driven_distance_km")).toDouble() <= 0
+            || data.value(QStringLiteral("income")).toDouble() <= 0
+            || data.value(QStringLiteral("started_at_utc")).toString().isEmpty()
+            || data.value(QStringLiteral("completed_at_utc")).toString().isEmpty()) {
+            std::cerr << "Demo delivery is missing required clearly marked fields.\n";
+            return false;
+        }
+    }
+    if (demo_job_id.isEmpty() || !found_start || !found_delivery) {
+        std::cerr << "Demo events were not recorded in local history.\n";
+        return false;
+    }
+
+    nlsi::telemetry::TelemetryCore restarted_core;
+    if (!restarted_core.Initialize(user_data.path().toStdWString())) {
+        std::cerr << "Telemetry core could not reload the persisted demo history.\n";
+        return false;
+    }
+    const nlsi::session::HistorySnapshot reloaded_history = restarted_core.History();
+    restarted_core.Shutdown();
+    const bool restored_delivery = std::any_of(
+        reloaded_history.jobs.cbegin(), reloaded_history.jobs.cend(),
+        [&demo_job_id](const nlsi::session::JobRecord& job) {
+            return job.details.value(QStringLiteral("job_id")).toString() == demo_job_id
+                && job.status == QStringLiteral("Delivered");
+        });
+    if (!restored_delivery) {
+        std::cerr << "Demo delivery did not survive local history reload.\n";
+        return false;
+    }
+
+    bool visible_in_completed_jobs = false;
+    nlsi::gui::JobHistoryPage completed_jobs;
+    completed_jobs.UpdateHistory(reloaded_history);
+    for (QLabel* value : completed_jobs.findChildren<QLabel*>(
+             QStringLiteral("completedJobFieldValue"))) {
+        visible_in_completed_jobs = visible_in_completed_jobs
+            || value->text().contains(QStringLiteral("Demo Cargo - TEST DATA"));
+    }
+    if (!visible_in_completed_jobs) {
+        std::cerr << "Demo delivery did not appear in completed jobs.\n";
+        return false;
+    }
+
+    QDir telemetry_directory(QDir(user_data.path()).filePath(QStringLiteral("telemetry")));
+    const QStringList record_files = telemetry_directory.entryList(
+        {QStringLiteral("*.nlsi")}, QDir::Files, QDir::Name);
+    bool found_local_record = false;
+    for (const QString& file_name : record_files) {
+        QFile file(telemetry_directory.filePath(file_name));
+        if (file.open(QIODevice::ReadOnly)
+            && file.readAll().contains(demo_job_id.toUtf8())) {
+            found_local_record = true;
+            break;
+        }
+    }
+    if (!found_local_record) {
+        std::cerr << "Demo delivery was not found in local .nlsi records.\n";
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1905,7 +2070,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     application.setStyleSheet(QString::fromUtf8(stylesheet.readAll()));
-    application.setApplicationVersion(QStringLiteral("v1.5.4-beta"));
+    application.setApplicationVersion(QStringLiteral("v1.5.9-beta"));
     if (!TestModLogParsingAndSourceLinks()
         || !TestIncrementalGameLogMonitoring()
         || !TestMonitorStartsBeforeGame()
@@ -1918,13 +2083,14 @@ int main(int argc, char** argv) {
         || !TestProviderSurfaceSelectsTruckSimOnly()
         || !TestDashboardCruiseControlIndicators()
         || !TestLowFuelWarningAndParkingBrakeStates()
+        || !TestSendDemoDelivery()
         || !TestMeasurementUnitConversionsAndSettings()
         || !TestDashboardLayoutAndResponsiveText()
         || !TestCompletedJobsPdfExport()) {
         return 1;
     }
     nlsi::telemetry::TelemetryCore telemetry_core;
-    nlsi::gui::MainWindow window(L"NLSI Exclusive Logbook", L"v1.5.4-beta",
+    nlsi::gui::MainWindow window(L"NLSI Exclusive Logbook", L"v1.5.9-beta",
         telemetry_core);
 
     if (window.size() != QSize(900, 600) ||
@@ -2057,7 +2223,7 @@ int main(int argc, char** argv) {
         found_company = found_company
             || label->text() == QStringLiteral("Nabski Logistics and Solutions Inc.");
         found_version = found_version
-            || label->text() == QStringLiteral("v1.5.4-beta");
+            || label->text() == QStringLiteral("v1.5.9-beta");
         found_beta_channel = found_beta_channel
             || label->text() == QStringLiteral("Beta");
         if (label->text() == QStringLiteral("PRODUCT") && label->parentWidget()) {

@@ -1,3 +1,148 @@
+# NLSI Exclusive Logbook v1.5.9-beta
+
+This beta adds a clearly marked demo delivery that exercises the existing local
+history, `.nlsi` persistence, and authenticated synchronization pipeline. It
+also removes the redundant Configure Sync button while retaining key entry and
+Sync Now in Settings > Connect.
+
+## What's changed
+
+- Adds Send Demo, using unique demo job identifiers, test-data markers, the
+  existing delivery event path, and the existing retry-safe upload queue.
+- Uses schema-defined website driver access keys for ingestion and maps
+  delivery summaries onto existing `jobs` columns without changing the
+  authoritative website schema.
+- Keeps API endpoint configuration with Enter Your Key and removes Configure
+  Sync from the Connect tab.
+
+## Verification limits
+
+- No live database insertion or deployed API request is claimed unless
+  confirmed during this task's verification.
+
+---
+
+# NLSI Exclusive Logbook v1.5.8-beta
+
+This beta keeps the existing Settings sections and groups driver-key and
+synchronization controls in a new Settings > Connect tab.
+
+## What's changed
+
+- Moves **Enter Your Key** and **Sync Now** from the application header into
+  Settings > Connect, alongside **Configure Sync**.
+- Preserves the existing key validation, per-user DPAPI storage, HTTPS
+  synchronization setup, local records, and offline behavior.
+
+---
+
+# NLSI Exclusive Logbook v1.5.7-beta
+
+This v1.5.7 Beta build adds website-managed per-driver credentials while
+keeping the native application usable offline and preserving the durable retry
+queue. The application and installer were built locally; no production
+deployment or release publication was performed.
+
+## What's changed
+
+- Adds driver login, profile, and device management pages with CSRF-protected
+  actions, rate-limited authentication, one-time key display, revocation, and
+  replacement.
+- Stores only SHA-256 device-key hashes in the server database and resolves
+  accepted telemetry to the driver associated with the validated device.
+- Adds the final fresh-install schema while retaining numbered migrations as
+  the upgrade source of truth; no database import or migration was executed.
+- Adds website API forwarders to the existing PHP heartbeat, ingestion, and
+  status handlers.
+- Adds per-driver 12-character keys with one-time display, CSRF-protected
+  generation and rotation, hash-only database storage, and an HTTPS validator
+  that returns only the driver ID and display name.
+- Adds optional **Enter Your Key** validation in the native app and stores the
+  validated key in a separate Windows DPAPI-protected settings file; the strict
+  telemetry `.nlsi` JSONL records remain untouched.
+- Keeps LOCAL MODE fully usable without a key; configured credentials remain
+  DPAPI-protected per Windows user, and outage/revocation outcomes are distinct.
+- Removes global sequence-number uniqueness so independently registered
+  devices can upload their local record sequences without collisions.
+- Preserves the established installer identity, install path, in-place
+  upgrade/repair checks, and per-user data retention policy.
+
+## Verification limits
+
+- PHP backend and syntax checks passed; the Python suite passed (62 tests, 1
+  skipped); native Release CTest passed (2/2); and the application and installer
+  build completed successfully.
+- The migration was not applied to a live MySQL/MariaDB database; HTTPS
+  validation against a deployed website and fresh/in-place installer execution
+  were not performed.
+
+---
+
+# NLSI Exclusive Logbook v1.5.6-beta
+
+This source update adds an optional, authenticated server-sync path while
+preserving local telemetry records and the durable retry queue. It does not
+represent a built or published release.
+
+## What's changed
+
+- Adds ordered, additive SQL migrations for full native provider records,
+  stable job-ID history, and job summaries without synthesizing session or
+  provider timestamps.
+- Loads the PHP deployment settings from the server-side `db/.env`, protects
+  native API endpoints with an HTTPS bearer credential, removes product
+  login/registration, and keeps the dashboard local-only by default.
+- Adds a DPAPI-protected per-user sync configuration, Sync Now, 15-minute
+  automatic sync while the application is open, explicit committed-record
+  acknowledgement, and retry-safe local queue handling.
+- Requires both fresh installation and upgrade setup paths to install and
+  verify the architecture-matched packaged plugin DLL, with backup and
+  explicit failure reporting for missing, locked, or inaccessible files.
+
+## Verification limits
+
+- The release build, live MySQL migration, HTTPS/ngrok round trip, and actual
+  fresh/upgrade installer execution must be reported only after those checks
+  have been performed in the target environment.
+
+---
+
+# NLSI Exclusive Logbook v1.5.5-beta
+
+This beta adds an optional authenticated PHP/MySQL synchronization path while
+retaining the native Qt application, local `.nlsi` records, and durable queue.
+
+## What's changed
+
+- Adds a protected PHP API and browser dashboard under `/db`, with PDO queries,
+  bearer authentication for native uploads, browser session authentication,
+  database heartbeat, history, synchronization status, and authorized
+  diagnostics.
+- Adds versioned additive storage for full schema-v2 provider records that do
+  not fit the original TruckSim-specific SQL columns. Stable record IDs make
+  repeated uploads idempotent.
+- Adds HTTPS native upload, a Sync Now action, automatic sync attempts every
+  15 minutes while the desktop app is open, and API-to-database connection
+  status. The local queue is acknowledged only after the API confirms committed
+  records; errors leave records pending for retry.
+- Makes both plugin setup helpers replace outdated installed plugin DLLs
+  instead of silently skipping old copies. Existing files are preserved for
+  recovery, packaged sources are architecture/hash checked, and copied DLLs
+  are verified before setup reports success.
+
+## Requirements and limitations
+
+- Remote database synchronization and dashboard access require local XAMPP/PHP
+  setup, a migrated MySQL database, configured credentials, and an active
+  HTTPS endpoint. ngrok availability depends on the tunnel being active.
+- End-to-end synchronization from a second PC, a real fresh/upgrade installer
+  run, and live ETS2/ATS gameplay have not been performed as part of this
+  source update. Do not treat remote sync as production-verified.
+- Build and test outcomes for this checkout are recorded in the final task
+  report; no release artifact has been published.
+
+---
+
 # NLSI Exclusive Logbook v1.5.4-beta
 
 This beta release hardens completed-job history, independent SDK/GPS provider

@@ -14,6 +14,7 @@
 #include <QFile>
 #include <QJsonObject>
 #include <QSet>
+#include <QStringList>
 
 namespace nlsi::logging {
 
@@ -51,6 +52,12 @@ public:
     std::uint64_t QueuedCount() const;
     Metrics GetMetrics() const;
     bool IsRunning() const;
+    std::vector<QJsonObject> PendingSyncRecords(
+        std::size_t maximum_records,
+        std::wstring* error = nullptr) const;
+    bool MarkSynchronized(
+        const QStringList& record_ids,
+        std::wstring* error = nullptr);
 
 private:
     struct QueuedSample {
@@ -75,6 +82,7 @@ private:
     QString root_;
     QString telemetry_directory_;
     QString sync_queue_path_;
+    mutable std::mutex sync_queue_mutex_;
     mutable std::mutex mutex_;
     std::condition_variable condition_;
     std::deque<QueuedSample> queue_;

@@ -238,6 +238,9 @@ foreach ($library in $libraries) {
             $destination = [System.IO.Path]::GetFullPath(
                 (Join-Path $pluginDirectory $pluginName))
             try {
+                if (Test-Path -LiteralPath $destination -PathType Container) {
+                    throw "The TruckSim GPS destination is a directory, not a DLL file: $destination"
+                }
                 New-Item -ItemType Directory -Path $pluginDirectory -Force | Out-Null
                 $sourceHash = $expectedHashes[$architecture]
                 $previousHash = $previousHashes[$destination]
@@ -253,11 +256,21 @@ foreach ($library in $libraries) {
                         }
                         continue
                     }
-                    if ([string]::IsNullOrWhiteSpace($previousHash) -or
-                        $currentHash -ine $previousHash) {
-                        Write-Status "Install: preserved a different or modified plugin instead of overwriting it: $destination"
-                        continue
+                    if (-not $previousHash) {
+                        $existingMachine = $null
+                        try {
+                            $existingMachine = Get-PeMachine $destination
+                        }
+                        catch {
+                            Write-Status "Install: preserved an unmanaged non-plugin file at the TruckSim GPS destination: $destination"
+                            continue
+                        }
+                        if ($existingMachine -ne $expectedMachines[$architecture]) {
+                            Write-Status "Install: preserved an unmanaged file with a different architecture at the TruckSim GPS destination: $destination"
+                            continue
+                        }
                     }
+                    Write-Status "Install: replacing an outdated TruckSim GPS plugin at $destination"
                 }
 
                 $temporary = "$destination.nlsi-$([guid]::NewGuid().ToString('N')).tmp"
@@ -286,7 +299,7 @@ foreach ($library in $libraries) {
                 Write-Status "Install: installed $architecture TruckSim GPS plugin: $destination"
             }
             catch {
-                $message = "Install: failed to install TruckSim GPS plugin at $destination. $($_.Exception.Message)"
+                $message = "Install: failed to install TruckSim GPS plugin at $destination. Check that the game folder is writable, close ETS2/ATS and any program using the DLL, then retry. $($_.Exception.Message)"
                 $failures.Add($message)
                 Write-Status $message
             }
