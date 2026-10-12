@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 
 #include "SyncConfiguration.h"
 
@@ -22,6 +23,7 @@ struct SyncStatus {
     bool configured = false;
     bool database_connected = false;
     bool credential_rejected = false;
+    bool connecting = false;
     bool syncing = false;
     std::uint64_t pending_records = 0;
     QString last_successful_check;
@@ -32,6 +34,8 @@ struct SyncStatus {
 
 class SyncClient final : public QObject {
 public:
+    using ConnectionTestCompletion = std::function<void(bool, const QString&)>;
+
     explicit SyncClient(
         logging::TelemetryRecorder& recorder,
         const QString& user_data_directory,
@@ -40,6 +44,7 @@ public:
     void Start();
     void Stop();
     void SyncNow();
+    void TestConnection(ConnectionTestCompletion completion);
     bool Configure(const QString& api_base_url, const QString& device_api_key, QString* error);
     QString ApiBaseUrl() const;
     SyncStatus Status() const;

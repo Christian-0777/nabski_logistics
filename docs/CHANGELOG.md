@@ -2,6 +2,19 @@
 
 Release history is based on the repository's tagged v0.1.0 source and the confirmed v0.2.0/v0.3.0 release changes.
 
+## v1.6.3-beta
+
+- Removes the read-only summary from Settings > Config and keeps all configuration controls editable.
+- Keeps dropdown edits pending until one Save; saves and resets the selected game's complete settings through QSettings.
+- Preserves ETS2/ATS defaults, per-game settings, `.nlsi` compatibility, telemetry records, and synchronization queues.
+- Aligns application, About, Windows resource, installer, and release metadata to v1.6.3-beta.
+
+## v1.6.1-beta
+
+- Replaces the existing Settings > Connect contents with a responsive URL/key form, secure save, form-only clear, manual sync, and a read-only authenticated health check.
+- Reuses DPAPI-protected configuration, driver-key validation, `/api/heartbeat.php`, and `/api/ingest.php`; the health check does not upload records.
+- Shows the actual sync result, successful sync time, and local pending-record count while preserving queued records and other Settings tabs.
+
 ## v1.5.2-beta
 
 - Merges fresh, matching-game NLSI and TruckSim telemetry without replacing valid preferred-provider values with stale or conflicting data.

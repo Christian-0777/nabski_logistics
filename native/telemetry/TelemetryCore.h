@@ -67,6 +67,7 @@ public:
         const QString& device_api_key,
         QString* error);
     QString SyncApiBaseUrl() const;
+    void TestSyncConnection(sync::DriverKeyClient::Completion completion);
     void ValidateDriverKey(
         const QString& website_api_base_url,
         const QString& driver_key,

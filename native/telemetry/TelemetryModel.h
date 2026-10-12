@@ -106,6 +106,7 @@ struct ProviderStatus {
     std::wstring sync_state = L"Offline; no authenticated API configured";
     std::uint64_t sync_pending_count = 0;
     bool api_connected = false;
+    bool api_connecting = false;
     bool sync_configured = false;
     bool sync_in_progress = false;
     std::wstring last_api_check;

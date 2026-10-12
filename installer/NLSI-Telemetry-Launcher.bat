@@ -1,17 +1,24 @@
 @echo off
 setlocal
 
-set "APP_ROOT=%~dp0"
+set "SCRIPT_DIR=%~dp0"
+if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
+set "APP_ROOT=%SCRIPT_DIR%\.."
 if "%APP_ROOT:~-1%"=="\" set "APP_ROOT=%APP_ROOT:~0,-1%"
-if not exist "%APP_ROOT%\app\agent.py" (
+
+if exist "%APP_ROOT%\agent.py" (
+    set "APP_DIR=%APP_ROOT%"
+) else if exist "%APP_ROOT%\app\agent.py" (
+    set "APP_DIR=%APP_ROOT%\app"
+) else (
     echo NLSI Telemetry is not installed correctly.
-    echo Expected: "%APP_ROOT%\app\agent.py"
+    echo Expected: "%APP_ROOT%\agent.py" or "%APP_ROOT%\app\agent.py"
     exit /b 1
 )
 
 set "PYTHON_EXE=%APP_ROOT%\runtime\pythonw.exe"
 set "PYTHON_CONSOLE_EXE=%APP_ROOT%\runtime\python.exe"
-pushd "%APP_ROOT%\app"
+pushd "%APP_DIR%"
 if exist "%PYTHON_EXE%" goto bundled_runtime
 if exist "%PYTHON_CONSOLE_EXE%" goto bundled_console_runtime
 

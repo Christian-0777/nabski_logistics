@@ -477,6 +477,7 @@ TelemetryUiState TelemetryCore::UiState() const {
     if (sync_client_) {
         const sync::SyncStatus sync_status = sync_client_->Status();
         result.providers.api_connected = sync_status.database_connected;
+        result.providers.api_connecting = sync_status.connecting;
         result.providers.sync_configured = sync_status.configured;
         result.providers.sync_in_progress = sync_status.syncing;
         result.providers.sync_pending_count = sync_status.pending_records;
@@ -670,6 +671,18 @@ bool TelemetryCore::ConfigureSync(
 QString TelemetryCore::SyncApiBaseUrl() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return sync_client_ ? sync_client_->ApiBaseUrl() : QString();
+}
+
+void TelemetryCore::TestSyncConnection(
+    sync::DriverKeyClient::Completion completion) {
+    if (!sync_client_) {
+        if (completion) {
+            completion(false, QStringLiteral(
+                "Local telemetry storage is not available for connection testing."));
+        }
+        return;
+    }
+    sync_client_->TestConnection(std::move(completion));
 }
 
 void TelemetryCore::ValidateDriverKey(

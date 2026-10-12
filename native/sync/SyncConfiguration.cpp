@@ -143,7 +143,7 @@ bool SyncConfigurationStore::Save(
         || !IsValidDeviceApiKey(configuration.device_api_key)) {
         if (error) {
             *error = QStringLiteral(
-                "Enter an HTTPS API base URL and a valid NLSI driver or legacy device key.");
+                "Enter an HTTPS or loopback HTTP API base URL and a valid NLSI driver or legacy device key.");
         }
         return false;
     }
@@ -182,9 +182,16 @@ bool SyncConfigurationStore::Save(
 
 bool SyncConfigurationStore::IsValidApiBaseUrl(const QString& api_base_url) {
     const QUrl url(api_base_url.trimmed(), QUrl::StrictMode);
+    const QString scheme = url.scheme().toLower();
+    const QString host = url.host().toLower();
+    const bool secure = scheme == QStringLiteral("https");
+    const bool local_http = scheme == QStringLiteral("http")
+        && (host == QStringLiteral("localhost")
+            || host == QStringLiteral("127.0.0.1")
+            || host == QStringLiteral("::1"));
     return url.isValid()
-        && url.scheme().compare(QStringLiteral("https"), Qt::CaseInsensitive) == 0
-        && !url.host().isEmpty()
+        && (secure || local_http)
+        && !host.isEmpty()
         && url.userInfo().isEmpty()
         && url.query().isEmpty()
         && url.fragment().isEmpty();
@@ -267,7 +274,7 @@ bool SyncConfigurationStore::SaveDriverKey(
         || !IsValidDriverKey(configuration.driver_key)) {
         if (error) {
             *error = QStringLiteral(
-                "Enter an HTTPS website API URL and a 12-character alphanumeric driver key.");
+                "Enter an HTTPS or loopback HTTP website API URL and a 12-character alphanumeric driver key.");
         }
         return false;
     }

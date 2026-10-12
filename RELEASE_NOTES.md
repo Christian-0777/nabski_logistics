@@ -1,4 +1,63 @@
-# NLSI Exclusive Logbook v1.5.9-beta
+# NLSI Exclusive Logbook v1.6.3-beta
+
+This beta updates Settings > Config to support independent pending edits and
+one-click save or reset, while keeping preferences in the existing settings
+store rather than telemetry records.
+
+## What's changed
+
+- Removes the read-only `--` telemetry summary from Config while retaining
+  every editable configuration option.
+- Keeps dropdown edits visible and unsaved until Save commits the complete
+  selected configuration in one settings-store sync.
+- Adds one-click Reset for the selected game's established defaults, including
+  ETS2 Metric/EUR and ATS Imperial/USD values.
+- Reports validation and persistence errors without presenting a false
+  success; refreshes no longer overwrite drafts.
+- Preserves `.nlsi` schemas, telemetry/history records, active mods, and
+  synchronization queues.
+- Aligns app/About, `version.json`, Windows executable, installer, and release
+  metadata to v1.6.3 Beta.
+
+## Verification
+
+Build and test results are recorded with the local release artifacts; this
+local build does not publish a GitHub release or install over an existing app.
+
+---
+
+# NLSI Exclusive Logbook v1.6.1-beta
+
+This beta replaces the existing Settings > Connect tab contents with a
+responsive connection form. It retains the established DPAPI-protected
+configuration and retry-safe local synchronization queue.
+
+## What's changed
+
+- Adds full-width website base URL and masked driver-key fields with SAVE and
+  form-only CLEAR actions.
+- Keeps SYNC on the Connect tab and uses the existing authenticated heartbeat
+  and ingestion endpoints.
+- Changes DEMO to a read-only authenticated heartbeat test; it does not create
+  demo deliveries or upload records.
+- Shows live connection/synchronization state, the last successful sync time,
+  and the local pending-record count.
+- Accepts HTTPS URLs and HTTP URLs restricted to localhost/loopback; redirects
+  remain disabled and public non-HTTPS URLs are rejected.
+- Allows the existing VTC driver-key validator to accept non-TLS requests only
+  when the client address, request host, and configured server name are all
+  loopback; all other requests still require HTTPS.
+- Preserves the rest of Settings, local telemetry/history/PDF behavior, and
+  earlier release notes.
+
+## Verification limits
+
+- A live production API request, deployed database, and interactive Windows
+  installer were not exercised unless separately confirmed during this task.
+
+---
+
+# NLSI Exclusive Logbook v1.6.0-beta
 
 This beta adds a clearly marked demo delivery that exercises the existing local
 history, `.nlsi` persistence, and authenticated synchronization pipeline. It

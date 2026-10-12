@@ -1,8 +1,21 @@
-NLSI Exclusive Logbook v1.5.9-beta
+NLSI Exclusive Logbook v1.6.3-beta
+
+WHAT'S NEW IN V1.6.3-BETA
+
+- Remove the read-only telemetry summary from Settings > Config.
+- Keep all configuration edits pending until one Save stores the full selection.
+- Reset and persist all defaults for the currently selected game with one click.
+- Keep preferences in the settings store; preserve all .nlsi logs and sync queues.
+- Show a useful failure message when validation or saving does not succeed.
+
+PREVIOUS RELEASE NOTES
 
 What's New
-- Create and submit an explicitly marked demo delivery through the existing local record and authenticated API synchronization pipeline.
-- Keep Enter Your Key and Sync Now in Settings > Connect; remove the redundant Configure Sync control.
+- Replace the existing Connect tab contents with secure URL/key configuration, safe form clearing, manual sync, and live connection details.
+- Test connectivity with the authenticated read-only heartbeat endpoint without generating demo deliveries or uploading records.
+- Display actual last-successful-sync time and pending local queue count; retain queued records after sync failures.
+- Preserve HTTPS for public endpoints and allow HTTP only for localhost/loopback.
+- Configure the website base URL, driver key, and sync controls directly in Settings > Connect.
 - Automatically fit all Dashboard cards to responsive widths and show current-position availability with the active-job destination.
 - Read active Workshop mods from the ETS2/ATS game logs in Documents, with metadata, Workshop source links, and optional Steam preview thumbnails.
 - Show only exact ferry, train, and paid-toll telemetry events; repeated records are collapsed and unrecorded fees remain unavailable.
@@ -16,11 +29,11 @@ What's New
 - Add optional website-managed per-device API keys; the PHP API resolves driver ownership and stores only key hashes.
 - Generate or rotate a separate 12-character driver key from the authenticated website profile; rotated keys stop validating immediately.
 - Optionally enter a driver key in the application, validate it over HTTPS, and save it with current-user Windows DPAPI without changing telemetry .nlsi records.
-- Find Enter Your Key and Sync Now together in Settings > Connect.
+- Keep the driver key protected with current-user DPAPI and preserve local-only operation without a key.
 - Keep native LOCAL MODE fully operational without an account or key; save configured credentials with current-user DPAPI.
 - Distinguish invalid/revoked credentials from API outages and retain queued records for retry.
 - Preserve existing .nlsi/TXT logs, history, and user data during upgrades and uninstall.
-- The About page shows the current application version: v1.5.9-beta (Beta).
+- The About page shows the current application version from release metadata.
 - The SCS SDK position-only plugin supplies in-game XYZ coordinates over its own versioned IPC mapping.
 - Existing TruckSim GPS revision-13 fields, mapping, and job/session data remain unchanged.
 - Fresh install and upgrade both install and verify the architecture-matched packaged game plugin DLL; existing plugin files are backed up before replacement.

@@ -3,8 +3,9 @@ setlocal
 cd /d "%~dp0"
 
 if "%~1"=="" (
-    echo Usage: build.bat ^<path-to-extracted-scs-sdk-1.15^>
-    exit /b 2
+    set "SDK_ROOT=%CD%\includes\scs_sdk_1_15"
+) else (
+    set "SDK_ROOT=%~f1"
 )
 
 for /f "usebackq delims=" %%V in (`powershell.exe -NoProfile -Command "(Get-Content -Raw version.json | ConvertFrom-Json).version"`) do set "APP_VERSION=%%V"
@@ -17,9 +18,10 @@ if not defined APP_VERSION (
     exit /b 1
 )
 
-set "SDK_ROOT=%~f1"
 if not exist "%SDK_ROOT%\include\scssdk_telemetry.h" (
-    echo The SDK root must contain include\scssdk_telemetry.h.
+    echo [ERROR] SCS Telemetry SDK 1.15 was not found at "%SDK_ROOT%".
+    echo [ERROR] Either place the SDK under "%CD%\includes\scs_sdk_1_15" or pass the SDK path explicitly.
+    echo [ERROR] Example: build.bat "C:\SCS\scs_sdk_1_15"
     exit /b 2
 )
 

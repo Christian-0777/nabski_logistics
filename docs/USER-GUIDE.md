@@ -2,7 +2,7 @@
 
 ## Installation and launch
 
-The native v1.4.3-beta application is built for Windows x64 with Qt 6.12 and MSVC 2022. It opens at the existing 900×600 minimum window size and can start without a game; live values remain unavailable until TruckSim GPS telemetry is available. The retained Python implementation is a separate legacy reference and is not bundled in the native application.
+The native v1.6.3-beta application is built for Windows x64 with Qt 6.12 and MSVC 2022. It opens at the existing 900×600 minimum window size and can start without a game; live values remain unavailable until TruckSim GPS telemetry is available. The retained Python implementation is a separate legacy reference and is not bundled in the native application.
 
 ## Navigation
 
@@ -10,7 +10,7 @@ The native v1.4.3-beta application is built for Windows x64 with Qt 6.12 and MSV
 - **Jobs** — current job identity and progress, plus the completed-jobs view.
 - **History** — session/trip, completed-job, and explicitly recorded toll/transport event views.
 - **Events** — application and telemetry event view.
-- **Settings** — Application, Providers, Telemetry, and Active Mods subsections. Active Mods reads explicit active Workshop entries from the ETS2 and ATS game logs under Documents; subscribed-but-inactive mods are not listed. Workshop source links open the actual item page. Steam preview thumbnails load only when a page supplies a trusted HTTPS Steam image URL.
+- **Settings** — Application, Providers, Config, Active Mods, and Connect subsections. Config keeps edits pending until one Save writes all selected configuration values; Reset restores and saves defaults for the selected game. Preferences use the existing QSettings store, not `.nlsi` records. Connect saves the website base URL and validated driver key with the existing Windows DPAPI-protected stores. CLEAR only empties the visible form; it does not remove saved settings or local records. SYNC uses the authenticated telemetry API and retains queued records until exact server acknowledgements arrive. DEMO performs a read-only authenticated `/api/heartbeat.php` health check and never creates a delivery or uploads telemetry. Active Mods reads explicit active Workshop entries from the ETS2 and ATS game logs under Documents; subscribed-but-inactive mods are not listed. Workshop source links open the actual item page. Steam preview thumbnails load only when a page supplies a trusted HTTPS Steam image URL.
 - **About** — company identity, current application version, clickable community and creator links, and TruckSim GPS/SCS attribution and license notices.
 
 The native application refreshes Qt controls on a timer from normalized state; the telemetry worker does not directly modify widgets. Missing or stale values are not treated as live values. Job metadata and progress are presented separately. The shared top header is the single source of page title and description.
@@ -25,17 +25,19 @@ The shared page header displays Asia/Manila date and live time to millisecond pr
 
 Dates use `MM/DD/YY`, decimal values use thousands separators and two decimal places, and integer values use thousands separators. Completed jobs can be exported to a paginated PDF; exports retain available earnings, route, dates, and recorded statistics without changing job history. TXT logs continue alongside versioned `.nlsi` JSON Lines logs; revision-13 raw samples are stored in daily telemetry `.nlsi` files. See [NLSI log format](NLSI-LOG-FORMAT.md).
 
-The current application version, **v1.4.3-beta**, is shown on the About page and comes from the build's version metadata. The release channel is **Beta**. The SCS SDK version and TruckSim GPS mapping revision are separate from the application version.
+The current application version, **v1.6.3-beta**, is shown on the About page and comes from the build's version metadata. The release channel is **Beta**. The SCS SDK version and TruckSim GPS mapping revision are separate from the application version.
 
 ## Configuration and privacy
 
-Raw telemetry, event/session/job history, TXT logs, `.nlsi` logs, stable job-ID mappings, and pending synchronization metadata are handled locally under `%LOCALAPPDATA%\NLSI\Exclusive Logbook`. The Beta has no account login or authenticated upload service and does not send gameplay telemetry to a website or cloud service. The Active Mods preview feature may request Workshop item pages and preview images from Steam using the active mod's Workshop ID; this does not upload telemetry. Pending records stay on disk; the updater contacts the public GitHub Releases API for version metadata only and never downloads or installs an update.
+Raw telemetry, event/session/job history, TXT logs, `.nlsi` logs, stable job-ID mappings, and pending synchronization metadata are handled locally under `%LOCALAPPDATA%\NLSI\Exclusive Logbook`. Authenticated uploads are optional and occur only after a validated key is configured. Public API connections require HTTPS; HTTP is accepted only for localhost/loopback development. The Active Mods preview feature may request Workshop item pages and preview images from Steam using the active mod's Workshop ID; this does not upload telemetry. Pending records stay on disk until acknowledged; the updater contacts the public GitHub Releases API for version metadata only and never downloads or installs an update.
+
+Settings changes use the established Windows QSettings preference store and are not written to `.nlsi` telemetry or delivery records. `.nlsi` files remain historical append-only records; reset does not delete telemetry, history, mods data, or pending synchronization queues.
 
 ## Troubleshooting
 
 ### Telemetry says disconnected
 
-Confirm the TruckSim GPS telemetry plugin is installed in the game's matching architecture plugin folder and that the game is running. Setup attempts this automatically for detected Steam game folders and records installation results under the application directory's `logs\trucksim-plugin-status.txt`. Check Settings → Providers for the exact shared-memory mapping, revision, freshness result, sync state, and Windows error. A missing map can mean that the plugin is not installed or the game/plugin has not initialized; unsupported revisions are rejected rather than decoded with guessed offsets. Live ETS2/ATS behavior has not been tested for v1.4.3-beta.
+Confirm the TruckSim GPS telemetry plugin is installed in the game's matching architecture plugin folder and that the game is running. Setup attempts this automatically for detected Steam game folders and records installation results under the application directory's `logs\trucksim-plugin-status.txt`. Check Settings → Providers for the exact shared-memory mapping, revision, freshness result, sync state, and Windows error. A missing map can mean that the plugin is not installed or the game/plugin has not initialized; unsupported revisions are rejected rather than decoded with guessed offsets. Live ETS2/ATS behavior has not been tested for v1.6.3-beta.
 
 ### Known limitations
 

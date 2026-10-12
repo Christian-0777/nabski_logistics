@@ -12,6 +12,7 @@
 #include <QFutureWatcher>
 #include <QFrame>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QFileInfo>
 #include <QImage>
@@ -1481,13 +1482,13 @@ bool TestMeasurementUnitConversionsAndSettings() {
     nlsi::gui::SetMeasurementSystem(nlsi::gui::MeasurementSystem::Metric);
     nlsi::telemetry::TelemetryCore telemetry_core;
     nlsi::gui::MainWindow window(
-        L"NLSI Exclusive Logbook", L"v1.5.9-beta", telemetry_core);
+        L"NLSI Exclusive Logbook", L"v1.6.3-beta", telemetry_core);
     QTabWidget* settings_tabs = nullptr;
     for (QTabWidget* tabs : window.findChildren<QTabWidget*>()) {
         if (tabs->count() == 5
             && tabs->tabText(0) == QStringLiteral("APPLICATION")
             && tabs->tabText(1) == QStringLiteral("PROVIDERS")
-            && tabs->tabText(2) == QStringLiteral("TELEMETRY")
+            && tabs->tabText(2) == QStringLiteral("CONFIG")
             && tabs->tabText(3) == QStringLiteral("ACTIVE MODS")
             && tabs->tabText(4) == QStringLiteral("CONNECT")) {
             settings_tabs = tabs;
@@ -1497,30 +1498,93 @@ bool TestMeasurementUnitConversionsAndSettings() {
     if (!settings_tabs
         || settings_tabs->tabText(0) != QStringLiteral("APPLICATION")
         || settings_tabs->tabText(1) != QStringLiteral("PROVIDERS")
-        || settings_tabs->tabText(2) != QStringLiteral("TELEMETRY")
+        || settings_tabs->tabText(2) != QStringLiteral("CONFIG")
         || settings_tabs->tabText(3) != QStringLiteral("ACTIVE MODS")
         || settings_tabs->tabText(4) != QStringLiteral("CONNECT")) {
-        std::cerr << "Settings does not retain its existing tabs and add Connect.\n";
+        std::cerr << "Settings does not retain its existing tabs with the Connect replacement.\n";
         return false;
     }
     QWidget* connect_page = settings_tabs->widget(4);
-    QPushButton* enter_driver_key = window.findChild<QPushButton*>(
-        QStringLiteral("enterDriverKeyButton"));
-    QPushButton* sync_now = window.findChild<QPushButton*>(
-        QStringLiteral("syncNowButton"));
-    QPushButton* configure_sync = window.findChild<QPushButton*>(
-        QStringLiteral("configureSyncButton"));
-    QPushButton* send_demo = window.findChild<QPushButton*>(
-        QStringLiteral("sendDemoButton"));
-    if (!connect_page || !enter_driver_key
-        || enter_driver_key->text() != QStringLiteral("ENTER YOUR KEY")
-        || !connect_page->isAncestorOf(enter_driver_key)
-        || !sync_now || sync_now->text() != QStringLiteral("SYNC NOW")
-        || !connect_page->isAncestorOf(sync_now)
-        || configure_sync
-        || !send_demo || send_demo->text() != QStringLiteral("Send Demo")
-        || !connect_page->isAncestorOf(send_demo)) {
-        std::cerr << "Connect does not expose the intended key, sync, and demo controls.\n";
+    auto* website_url = window.findChild<QLineEdit*>(
+        QStringLiteral("connectWebsiteBaseUrl"));
+    auto* driver_key = window.findChild<QLineEdit*>(
+        QStringLiteral("connectDriverKey"));
+    auto* save = window.findChild<QPushButton*>(QStringLiteral("connectSaveButton"));
+    auto* clear = window.findChild<QPushButton*>(QStringLiteral("connectClearButton"));
+    auto* sync = window.findChild<QPushButton*>(QStringLiteral("connectSyncButton"));
+    auto* demo = window.findChild<QPushButton*>(QStringLiteral("connectDemoButton"));
+    auto* connection_state = window.findChild<QLabel*>(
+        QStringLiteral("connectConnectionState"));
+    auto* last_sync = window.findChild<QLabel*>(
+        QStringLiteral("connectLastSyncValue"));
+    auto* pending_records = window.findChild<QLabel*>(
+        QStringLiteral("connectPendingRecordsValue"));
+    if (!connect_page || !website_url || !driver_key
+        || driver_key->echoMode() != QLineEdit::Password
+        || !save || save->text() != QStringLiteral("SAVE")
+        || !clear || clear->text() != QStringLiteral("CLEAR")
+        || !sync || sync->text() != QStringLiteral("SYNC")
+        || !demo || demo->text() != QStringLiteral("DEMO")
+        || !connect_page->isAncestorOf(website_url)
+        || !connect_page->isAncestorOf(driver_key)
+        || !connection_state || !last_sync || !pending_records) {
+        std::cerr << "Connect does not expose the required masked connection form and controls.\n";
+        return false;
+    }
+    website_url->setText(QStringLiteral("https://portal.example.test/nlsi_vtc"));
+    driver_key->setText(QStringLiteral("AbC123xYz789"));
+    clear->click();
+    if (!website_url->text().isEmpty() || !driver_key->text().isEmpty()
+        || !window.findChild<QLabel*>(
+                QStringLiteral("connectConnectionMessage"))->text().contains(
+                    QStringLiteral("Saved connection settings and local telemetry records were not changed"))) {
+        std::cerr << "CLEAR did not safely clear only the form fields.\n";
+        return false;
+    }
+    website_url->setText(QStringLiteral("https://portal.example.test/nlsi_vtc"));
+    save->click();
+    if (!window.findChild<QLabel*>(
+                QStringLiteral("connectConnectionMessage"))->text().contains(
+                    QStringLiteral("Enter your 12-character driver key"))) {
+        std::cerr << "SAVE did not reject missing driver credentials.\n";
+        return false;
+    }
+    auto* connect_state_page = dynamic_cast<nlsi::gui::StatePage*>(connect_page);
+    if (!connect_state_page) {
+        std::cerr << "Connect page does not expose its state update contract.\n";
+        return false;
+    }
+    nlsi::telemetry::TelemetryUiState connect_state;
+    connect_state.providers.sync_configured = true;
+    connect_state.providers.api_connected = true;
+    connect_state.providers.sync_pending_count = 7;
+    connect_state.providers.last_successful_sync = L"2026-10-11T12:00:00.000Z";
+    connect_state_page->UpdateState(connect_state);
+    if (connection_state->text() != QStringLiteral("● Sync completed")
+        || pending_records->text() != QStringLiteral("7")
+        || last_sync->text() == QStringLiteral("Never")) {
+        std::cerr << "Connect status panels do not reflect actual sync state and queue data.\n";
+        return false;
+    }
+    connect_state.providers.last_successful_sync.clear();
+    connect_state.providers.sync_error = L"unavailable";
+    connect_state.providers.api_connected = false;
+    connect_state_page->UpdateState(connect_state);
+    if (connection_state->text() != QStringLiteral("● Connection failed")) {
+        std::cerr << "Connect did not distinguish a real connection failure.\n";
+        return false;
+    }
+    connect_state.providers.api_connected = true;
+    connect_state_page->UpdateState(connect_state);
+    if (connection_state->text() != QStringLiteral("● Synchronization failed")) {
+        std::cerr << "Connect did not distinguish a real synchronization failure.\n";
+        return false;
+    }
+    connect_state.providers.sync_error.clear();
+    connect_state.providers.storage_error = L"unavailable";
+    connect_state_page->UpdateState(connect_state);
+    if (pending_records->text() != QStringLiteral("Unavailable")) {
+        std::cerr << "Connect did not report an unavailable queue count explicitly.\n";
         return false;
     }
     for (QPushButton* button : window.findChildren<QPushButton*>()) {
@@ -1530,24 +1594,289 @@ bool TestMeasurementUnitConversionsAndSettings() {
             return false;
         }
     }
-    QComboBox* selector = window.findChild<QComboBox*>(
-        QStringLiteral("measurementSystemSelector"));
-    if (!selector || selector->count() != 2
-        || selector->itemText(0) != QStringLiteral("Metric")
-        || selector->itemText(1) != QStringLiteral("US customary")) {
-        std::cerr << "Settings does not expose the Metric and US customary options.\n";
+    QComboBox* preset = window.findChild<QComboBox*>(
+        QStringLiteral("configUnitPreset"));
+    QComboBox* config_currency = window.findChild<QComboBox*>(
+        QStringLiteral("configCurrency"));
+    QComboBox* config_distance = window.findChild<QComboBox*>(
+        QStringLiteral("configDistance"));
+    QComboBox* config_weight = window.findChild<QComboBox*>(
+        QStringLiteral("configWeight"));
+    QComboBox* config_cargo_weight = window.findChild<QComboBox*>(
+        QStringLiteral("configCargoWeight"));
+    QComboBox* config_volume = window.findChild<QComboBox*>(
+        QStringLiteral("configVolume"));
+    QComboBox* config_speed = window.findChild<QComboBox*>(
+        QStringLiteral("configSpeed"));
+    if (!preset || preset->count() != 3
+        || preset->itemText(0) != QStringLiteral("Metric")
+        || preset->itemText(1) != QStringLiteral("Imperial")
+        || preset->itemText(2) != QStringLiteral("Custom")
+        || !config_currency || !config_distance || !config_weight
+        || !config_cargo_weight || !config_volume || !config_speed) {
+        std::cerr << "Config does not expose Metric, Imperial, and Custom presets.\n";
         return false;
     }
-    selector->setCurrentIndex(1);
-    if (nlsi::gui::CurrentMeasurementSystem()
-        != nlsi::gui::MeasurementSystem::USCustomary) {
-        std::cerr << "Selecting US customary did not persist the presentation setting.\n";
+    preset->setCurrentIndex(1);
+    if (config_currency->currentData().toString() != QStringLiteral("USD")
+        || config_distance->currentData().toString() != QStringLiteral("mi")
+        || config_weight->currentData().toString() != QStringLiteral("lb")
+        || config_cargo_weight->currentData().toString() != QStringLiteral("short_ton")
+        || config_volume->currentData().toString() != QStringLiteral("us_gal")
+        || config_speed->currentData().toString() != QStringLiteral("mph")
+        || nlsi::gui::LoadRegionalSettings().preset
+            != nlsi::gui::MeasurementPreset::Metric) {
+        std::cerr << "The Imperial preset did not update only the pending form values.\n";
         return false;
     }
-    selector->setCurrentIndex(0);
-    if (nlsi::gui::CurrentMeasurementSystem()
-        != nlsi::gui::MeasurementSystem::Metric) {
-        std::cerr << "Selecting Metric did not persist the presentation setting.\n";
+    preset->setCurrentIndex(0);
+    if (config_currency->currentData().toString() != QStringLiteral("EUR")
+        || config_distance->currentData().toString() != QStringLiteral("km")
+        || config_weight->currentData().toString() != QStringLiteral("kg")
+        || config_cargo_weight->currentData().toString() != QStringLiteral("metric_tonne")
+        || config_volume->currentData().toString() != QStringLiteral("L")
+        || config_speed->currentData().toString() != QStringLiteral("km/h")
+        || nlsi::gui::LoadRegionalSettings().preset
+            != nlsi::gui::MeasurementPreset::Metric) {
+        std::cerr << "The Metric preset did not update only the pending form values.\n";
+        return false;
+    }
+    return true;
+}
+
+bool TestConfigDraftSaveAndReset() {
+    QTemporaryDir temporary_directory;
+    if (!temporary_directory.isValid()) {
+        std::cerr << "Could not create isolated telemetry fixture storage.\n";
+        return false;
+    }
+    QSettings settings(QStringLiteral("NLSI"), QStringLiteral("Exclusive Logbook"));
+    settings.remove(QStringLiteral("measurement"));
+    settings.sync();
+    if (settings.status() != QSettings::NoError) {
+        std::cerr << "Could not initialize isolated configuration test storage.\n";
+        return false;
+    }
+
+    const nlsi::gui::RegionalSettings ets2_defaults =
+        nlsi::gui::DefaultRegionalSettings(nlsi::gui::GameProfile::ETS2);
+    const nlsi::gui::RegionalSettings ats_defaults =
+        nlsi::gui::DefaultRegionalSettings(nlsi::gui::GameProfile::ATS);
+    if (ets2_defaults.currency != nlsi::gui::CurrencyUnit::EUR
+        || ets2_defaults.distance != nlsi::gui::DistanceUnit::Kilometers
+        || ets2_defaults.weight != nlsi::gui::WeightUnit::Kilograms
+        || ets2_defaults.cargo_weight != nlsi::gui::CargoWeightUnit::MetricTonnes
+        || ets2_defaults.volume != nlsi::gui::VolumeUnit::Liters
+        || ets2_defaults.speed != nlsi::gui::SpeedUnit::KilometersPerHour
+        || ats_defaults.currency != nlsi::gui::CurrencyUnit::USD
+        || ats_defaults.distance != nlsi::gui::DistanceUnit::Miles
+        || ats_defaults.weight != nlsi::gui::WeightUnit::Pounds
+        || ats_defaults.cargo_weight != nlsi::gui::CargoWeightUnit::ShortTons
+        || ats_defaults.volume != nlsi::gui::VolumeUnit::USGallons
+        || ats_defaults.speed != nlsi::gui::SpeedUnit::MilesPerHour) {
+        std::cerr << "The ETS2 or ATS default regional settings changed unexpectedly.\n";
+        return false;
+    }
+
+    const QString telemetry_path = QDir(temporary_directory.path())
+        .filePath(QStringLiteral("data/telemetry/2026-10-12.nlsi"));
+    const QString queue_path = QDir(temporary_directory.path())
+        .filePath(QStringLiteral("data/sync/queue.jsonl"));
+    QDir().mkpath(QFileInfo(telemetry_path).absolutePath());
+    QDir().mkpath(QFileInfo(queue_path).absolutePath());
+    const QByteArray telemetry_record =
+        "{\"format\":\"nlsi-telemetry\",\"schema_version\":2}\n"
+        "{\"record_type\":\"sample\",\"record_id\":\"fixture-1\"}\n";
+    const QByteArray queued_record = "{\"record_id\":\"fixture-1\",\"status\":\"Pending\"}\n";
+    QFile telemetry_file(telemetry_path);
+    QFile queue_file(queue_path);
+    if (!telemetry_file.open(QIODevice::WriteOnly)
+        || telemetry_file.write(telemetry_record) != telemetry_record.size()
+        || !queue_file.open(QIODevice::WriteOnly)
+        || queue_file.write(queued_record) != queued_record.size()) {
+        std::cerr << "Could not create telemetry and sync-queue preservation fixtures.\n";
+        return false;
+    }
+    telemetry_file.close();
+    queue_file.close();
+
+    nlsi::telemetry::TelemetryCore telemetry_core;
+    nlsi::gui::MainWindow window(
+        L"NLSI Exclusive Logbook", L"v1.6.3-beta", telemetry_core);
+    QTabWidget* settings_tabs = window.findChild<QTabWidget*>(
+        QStringLiteral("contentTabs"));
+    if (!settings_tabs || settings_tabs->tabText(2) != QStringLiteral("CONFIG")) {
+        std::cerr << "The Settings Config tab was not available.\n";
+        return false;
+    }
+    QWidget* config_page = settings_tabs->widget(2);
+    QComboBox* profile = window.findChild<QComboBox*>(
+        QStringLiteral("configGameProfile"));
+    QComboBox* preset = window.findChild<QComboBox*>(
+        QStringLiteral("configUnitPreset"));
+    QComboBox* currency = window.findChild<QComboBox*>(
+        QStringLiteral("configCurrency"));
+    QComboBox* distance = window.findChild<QComboBox*>(
+        QStringLiteral("configDistance"));
+    QComboBox* weight = window.findChild<QComboBox*>(
+        QStringLiteral("configWeight"));
+    QComboBox* cargo_weight = window.findChild<QComboBox*>(
+        QStringLiteral("configCargoWeight"));
+    QComboBox* volume = window.findChild<QComboBox*>(
+        QStringLiteral("configVolume"));
+    QComboBox* speed = window.findChild<QComboBox*>(
+        QStringLiteral("configSpeed"));
+    QComboBox* number_format = window.findChild<QComboBox*>(
+        QStringLiteral("configNumberFormat"));
+    QComboBox* date_format = window.findChild<QComboBox*>(
+        QStringLiteral("configDateFormat"));
+    QPushButton* save_button = window.findChild<QPushButton*>(
+        QStringLiteral("configSaveButton"));
+    QPushButton* reset_button = window.findChild<QPushButton*>(
+        QStringLiteral("configResetButton"));
+    QLabel* status = window.findChild<QLabel*>(
+        QStringLiteral("configStatusLabel"));
+    const QList<QComboBox*> controls = {
+        profile, preset, currency, distance, weight, cargo_weight, volume, speed,
+        number_format, date_format};
+    if (!config_page || !save_button || !reset_button || !status
+        || std::any_of(controls.cbegin(), controls.cend(),
+            [](const QComboBox* combo) { return combo == nullptr; })
+        || !config_page->findChildren<QLabel*>(
+            QStringLiteral("detailValue")).isEmpty()) {
+        std::cerr << "Config is missing editable fields, actions, or still has the summary panel.\n";
+        return false;
+    }
+
+    window.show();
+    if (QToolButton* settings_button =
+            FindButton(window, QStringLiteral("SETTINGS"))) {
+        settings_button->click();
+    }
+    settings_tabs->setCurrentIndex(2);
+    QApplication::processEvents();
+    const QPoint save_position = save_button->mapTo(config_page, QPoint(0, 0));
+    const QPoint reset_position = reset_button->mapTo(config_page, QPoint(0, 0));
+    if (qAbs(save_position.y() - reset_position.y()) > 2
+        || save_button->geometry().right() >= reset_button->geometry().left()) {
+        std::cerr << "Config Save and Reset are not aligned side by side.\n";
+        return false;
+    }
+
+    currency->setCurrentIndex(currency->findData(QStringLiteral("USD")));
+    distance->setCurrentIndex(distance->findData(QStringLiteral("mi")));
+    weight->setCurrentIndex(weight->findData(QStringLiteral("lb")));
+    cargo_weight->setCurrentIndex(cargo_weight->findData(QStringLiteral("long_ton")));
+    volume->setCurrentIndex(volume->findData(QStringLiteral("imp_gal")));
+    speed->setCurrentIndex(speed->findData(QStringLiteral("mph")));
+    number_format->setCurrentIndex(number_format->findData(QStringLiteral("decimal_comma")));
+    date_format->setCurrentIndex(date_format->findData(QStringLiteral("iso_8601")));
+    const nlsi::gui::RegionalSettings before_save =
+        nlsi::gui::LoadRegionalSettings(nlsi::gui::GameProfile::ETS2);
+    settings.sync();
+    if (before_save.currency != nlsi::gui::CurrencyUnit::EUR
+        || before_save.distance != nlsi::gui::DistanceUnit::Kilometers
+        || settings.contains(QStringLiteral("measurement/current_game"))
+        || distance->currentData().toString() != QStringLiteral("mi")
+        || number_format->currentData().toString() != QStringLiteral("decimal_comma")) {
+        std::cerr << "A dropdown was saved automatically or an edit disappeared from the form: "
+                  << "currency=" << static_cast<int>(before_save.currency)
+                  << ", distance=" << static_cast<int>(before_save.distance)
+                  << ", current_game="
+                  << settings.value(QStringLiteral("measurement/current_game"))
+                      .toString().toStdString()
+                  << ", form distance=" << distance->currentData().toString().toStdString()
+                  << ", number format="
+                  << number_format->currentData().toString().toStdString() << ".\n";
+        return false;
+    }
+    if (auto* config_state = dynamic_cast<nlsi::gui::StatePage*>(config_page)) {
+        config_state->UpdateState(nlsi::telemetry::TelemetryUiState());
+    }
+    if (distance->currentData().toString() != QStringLiteral("mi")
+        || number_format->currentData().toString() != QStringLiteral("decimal_comma")) {
+        std::cerr << "A state refresh overwrote pending configuration edits.\n";
+        return false;
+    }
+
+    save_button->click();
+    const nlsi::gui::RegionalSettings saved =
+        nlsi::gui::LoadRegionalSettings(nlsi::gui::GameProfile::ETS2);
+    if (!status->text().contains(QStringLiteral("Saved successfully"))
+        || saved.preset != nlsi::gui::MeasurementPreset::Custom
+        || saved.currency != nlsi::gui::CurrencyUnit::USD
+        || saved.distance != nlsi::gui::DistanceUnit::Miles
+        || saved.weight != nlsi::gui::WeightUnit::Pounds
+        || saved.cargo_weight != nlsi::gui::CargoWeightUnit::LongTons
+        || saved.volume != nlsi::gui::VolumeUnit::ImperialGallons
+        || saved.speed != nlsi::gui::SpeedUnit::MilesPerHour
+        || saved.number_format != QStringLiteral("decimal_comma")
+        || saved.date_format != QStringLiteral("iso_8601")
+        || nlsi::gui::CurrentGameProfile() != nlsi::gui::GameProfile::ETS2) {
+        std::cerr << "One-click Save did not persist every independently edited value.\n";
+        return false;
+    }
+
+    weight->setCurrentIndex(-1);
+    save_button->click();
+    if (!status->text().contains(QStringLiteral("Save failed"))
+        || !status->text().contains(QStringLiteral("Weight"))
+        || nlsi::gui::LoadRegionalSettings(nlsi::gui::GameProfile::ETS2).weight
+            != nlsi::gui::WeightUnit::Pounds) {
+        std::cerr << "Invalid configuration was saved or reported as successful.\n";
+        return false;
+    }
+
+    profile->setCurrentIndex(profile->findData(QStringLiteral("ats")));
+    if (currency->currentData().toString() != QStringLiteral("USD")
+        || distance->currentData().toString() != QStringLiteral("mi")
+        || weight->currentData().toString() != QStringLiteral("lb")) {
+        std::cerr << "Selecting ATS did not retain its established defaults.\n";
+        return false;
+    }
+    number_format->setCurrentIndex(number_format->findData(QStringLiteral("decimal_dot")));
+    reset_button->click();
+    const nlsi::gui::RegionalSettings reset =
+        nlsi::gui::LoadRegionalSettings(nlsi::gui::GameProfile::ATS);
+    if (!status->text().contains(QStringLiteral("Reset successful"))
+        || nlsi::gui::CurrentGameProfile() != nlsi::gui::GameProfile::ATS
+        || reset.preset != nlsi::gui::MeasurementPreset::Imperial
+        || reset.currency != nlsi::gui::CurrencyUnit::USD
+        || reset.distance != nlsi::gui::DistanceUnit::Miles
+        || reset.weight != nlsi::gui::WeightUnit::Pounds
+        || reset.cargo_weight != nlsi::gui::CargoWeightUnit::ShortTons
+        || reset.volume != nlsi::gui::VolumeUnit::USGallons
+        || reset.speed != nlsi::gui::SpeedUnit::MilesPerHour
+        || reset.number_format != QStringLiteral("locale_default")
+        || reset.date_format != QStringLiteral("locale_default")) {
+        std::cerr << "One-click Reset did not persist all ATS defaults.\n";
+        return false;
+    }
+
+    if (!telemetry_file.open(QIODevice::ReadOnly)
+        || !queue_file.open(QIODevice::ReadOnly)) {
+        std::cerr << "Could not read telemetry and sync queue after Reset.\n";
+        return false;
+    }
+    const QByteArray telemetry_after_reset = telemetry_file.readAll();
+    const QByteArray queue_after_reset = queue_file.readAll();
+    if (telemetry_after_reset != telemetry_record
+        || queue_after_reset != queued_record) {
+        std::cerr << "Reset changed a telemetry record or pending sync queue.\n";
+        return false;
+    }
+    nlsi::gui::MainWindow reopened_window(
+        L"NLSI Exclusive Logbook", L"v1.6.3-beta", telemetry_core);
+    if (reopened_window.findChild<QComboBox*>(
+            QStringLiteral("configGameProfile"))->currentData().toString()
+            != QStringLiteral("ats")
+        || reopened_window.findChild<QComboBox*>(
+            QStringLiteral("configCargoWeight"))->currentData().toString()
+            != QStringLiteral("short_ton")
+        || reopened_window.findChild<QComboBox*>(
+            QStringLiteral("configDateFormat"))->currentData().toString()
+            != QStringLiteral("locale_default")) {
+        std::cerr << "Reset values did not survive reopening the Settings page.\n";
         return false;
     }
     return true;
@@ -1905,7 +2234,7 @@ bool TestSingleInstanceGuard(QApplication& application) {
 
 bool TestOfflineUpdateCheck() {
     nlsi::updater::GitHubUpdater updater(
-        QStringLiteral("1.5.9-beta"),
+        QStringLiteral("1.6.3-beta"),
         nullptr,
         QUrl(QStringLiteral("http://127.0.0.1:1/releases")));
     QEventLoop loop;
@@ -2054,6 +2383,14 @@ bool TestSendDemoDelivery() {
 
 int main(int argc, char** argv) {
     QApplication application(argc, argv);
+    QTemporaryDir settings_directory;
+    if (!settings_directory.isValid()) {
+        std::cerr << "Could not create isolated GUI-test settings storage.\n";
+        return 1;
+    }
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+        settings_directory.path());
+    QSettings::setDefaultFormat(QSettings::IniFormat);
     const nlsi::gui::MeasurementSystem previous_units =
         nlsi::gui::CurrentMeasurementSystem();
     struct RestoreMeasurementSystem {
@@ -2070,7 +2407,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     application.setStyleSheet(QString::fromUtf8(stylesheet.readAll()));
-    application.setApplicationVersion(QStringLiteral("v1.5.9-beta"));
+    application.setApplicationVersion(QStringLiteral("v1.6.3-beta"));
     if (!TestModLogParsingAndSourceLinks()
         || !TestIncrementalGameLogMonitoring()
         || !TestMonitorStartsBeforeGame()
@@ -2085,12 +2422,13 @@ int main(int argc, char** argv) {
         || !TestLowFuelWarningAndParkingBrakeStates()
         || !TestSendDemoDelivery()
         || !TestMeasurementUnitConversionsAndSettings()
+        || !TestConfigDraftSaveAndReset()
         || !TestDashboardLayoutAndResponsiveText()
         || !TestCompletedJobsPdfExport()) {
         return 1;
     }
     nlsi::telemetry::TelemetryCore telemetry_core;
-    nlsi::gui::MainWindow window(L"NLSI Exclusive Logbook", L"v1.5.9-beta",
+    nlsi::gui::MainWindow window(L"NLSI Exclusive Logbook", L"v1.6.3-beta",
         telemetry_core);
 
     if (window.size() != QSize(900, 600) ||
@@ -2223,7 +2561,7 @@ int main(int argc, char** argv) {
         found_company = found_company
             || label->text() == QStringLiteral("Nabski Logistics and Solutions Inc.");
         found_version = found_version
-            || label->text() == QStringLiteral("v1.5.9-beta");
+            || label->text() == QStringLiteral("v1.6.3-beta");
         found_beta_channel = found_beta_channel
             || label->text() == QStringLiteral("Beta");
         if (label->text() == QStringLiteral("PRODUCT") && label->parentWidget()) {

@@ -14,10 +14,10 @@ SPEC.loader.exec_module(BUILDER)
 
 class NativeReleasePackagingTests(unittest.TestCase):
     def test_version_and_automatic_plugin_installation_policy(self) -> None:
-        self.assertEqual("1.5.9", BUILDER.VERSION)
+        self.assertEqual("1.6.3", BUILDER.VERSION)
         self.assertEqual("beta", BUILDER.CHANNEL)
         self.assertEqual("beta", BUILDER.INSTALL_CHANNEL)
-        self.assertEqual("v1.5.9-beta", BUILDER.RELEASE_TAG)
+        self.assertEqual("v1.6.3-beta", BUILDER.RELEASE_TAG)
         self.assertIn("Qt6Concurrent.dll", BUILDER.REQUIRED_RUNTIME_FILES)
         self.assertEqual(
             r"C:\Program Files\NLSI Exclusive Logbook",
@@ -71,6 +71,15 @@ class NativeReleasePackagingTests(unittest.TestCase):
             self.assertIn("nlsi_forward_telemetry_endpoint", route)
             self.assertIn(f"'{endpoint}.php'", route)
             self.assertTrue((ROOT / "db" / "api" / f"{endpoint}.php").is_file())
+
+    def test_driver_key_endpoint_keeps_public_https_and_limits_http_to_loopback(self) -> None:
+        endpoint = (
+            ROOT.parent / "nlsi_vtc" / "api" / "driver-key.php"
+        ).read_text(encoding="utf-8")
+        self.assertIn("$loopbackHttp = in_array($remoteAddress, ['127.0.0.1', '::1'], true)", endpoint)
+        self.assertIn("in_array($hostHeader, $localHosts, true)", endpoint)
+        self.assertIn("in_array($serverName, $localHosts, true)", endpoint)
+        self.assertIn("if (!$isHttps && !$loopbackHttp)", endpoint)
 
     def test_only_hash_verified_official_plugin_architectures_are_packaged(self) -> None:
         self.assertEqual(2, len(BUILDER.TRUCKSIM_PLUGIN_FILES))

@@ -17,15 +17,15 @@ The native desktop application uses Qt Widgets and does not require a Python run
 Configure and build with the Visual Studio 2022 x64 generator:
 
 ```bat
-cmake -S . -B build\cmake-v1.5.5-beta -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DCMAKE_PREFIX_PATH="C:\Qt\6.12.0\msvc2022_64"
-cmake --build build\cmake-v1.5.5-beta --config Debug
-cmake --build build\cmake-v1.5.5-beta --config Release
-ctest --test-dir build\cmake-v1.5.5-beta -C Release --output-on-failure
+cmake -S . -B build\cmake-v1.6.3-beta -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DCMAKE_PREFIX_PATH="C:\Qt\6.12.0\msvc2022_64"
+cmake --build build\cmake-v1.6.3-beta --config Debug
+cmake --build build\cmake-v1.6.3-beta --config Release
+ctest --test-dir build\cmake-v1.6.3-beta -C Release --output-on-failure
 ```
 
 Use the version-specific build directory for this release; the repository-root `build` directory may contain a cache from another generator and artifacts from earlier releases must not be reused or overwritten.
 
-Debug binaries are written to `build\debug\v1.5.5-beta`; Release binaries are written to `build\releases\v1.5.5-beta`, with version-scoped intermediate and test outputs. CMake deploys the Qt runtime, SVG/network dependencies, and platform plugin beside the application executable when `windeployqt` is available in the selected Qt installation.
+Debug binaries are written to `build\debug\v1.6.3-beta`; Release binaries are written to `build\releases\v1.6.3-beta`, with version-scoped intermediate and test outputs. CMake deploys the Qt runtime, SVG/network dependencies, and platform plugin beside the application executable when `windeployqt` is available in the selected Qt installation.
 
 ## Tests
 
@@ -39,9 +39,10 @@ These tests exercise the agent model, GUI view-model, persisted history, and bui
 
 ## Build the native plugin
 
-The separate legacy SCS ABI plugin remains available when explicitly needed:
+The separate legacy SCS ABI plugin remains available when explicitly needed. If no SDK path is supplied, the project uses the bundled copy at `includes\scs_sdk_1_15`; an external install such as `C:\SCS\scs_sdk_1_15` still works when passed explicitly:
 
 ```bat
+build.bat
 build.bat "C:\SCS\scs_sdk_1_15"
 ```
 
@@ -55,11 +56,11 @@ Use the existing Visual Studio CMake build and native installer script:
 build-release.bat
 ```
 
-The script builds the `NLSI-Exclusive-Logbook` Release application, x64/x86 SCS position plugins, and native tests in version-specific directories, runs Python compatibility tests and Release CTest, then calls `build-installer.bat` to stage Qt/MSVC, official TruckSim plugin files, notices, and release documentation before compiling `installer\NLSI-Exclusive-Logbook.iss`. The installer helper exit codes are checked, and a plugin-copy or post-copy validation failure stops setup. If no supported game is detected, the application may still install; helper status logs record that no game plugin was installed. All build and package output paths are version-specific. The expected installer output is `build\releases\v1.5.5-beta\NLSI-Exclusive-Logbook-v1.5.5-beta-Setup.exe`.
+The script builds the `NLSI-Exclusive-Logbook` Release application, x64/x86 SCS position plugins, and native tests in version-specific directories, runs Python compatibility tests and Release CTest, then calls `build-installer.bat` to stage Qt/MSVC, official TruckSim plugin files, notices, and release documentation before compiling `installer\NLSI-Exclusive-Logbook.iss`. The installer helper exit codes are checked, and a plugin-copy or post-copy validation failure stops setup. If no supported game is detected, the application may still install; helper status logs record that no game plugin was installed. All build and package output paths are version-specific. The expected installer output is `build\releases\v1.6.3-beta\NLSI-Exclusive-Logbook-v1.6.3-beta-Setup.exe`.
 
 ## PHP sync backend
 
-The native client uses Qt Network and reads the existing durable `sync/queue.jsonl` plus matching telemetry records from local v2 `.nlsi` files. Configure its HTTPS base URL and website-issued per-device key in API Settings; the key is stored with the existing Windows DPAPI protection and is never compiled into the application. Manual Sync Now and automatic sync attempts every 15 minutes are handled in the desktop process. API connectivity is shown only after the authenticated heartbeat verifies PDO/MySQL access. Without a configured device credential, the application remains in LOCAL MODE and retains queued records. The PHP sources, XAMPP setup, protected configuration, migrations, and backend tests live in `db/`; see [db/README.md](../db/README.md).
+The native client uses Qt Network and reads the existing durable `sync/queue.jsonl` plus matching telemetry records from local v2 `.nlsi` files. Configure its website base URL and website-issued 12-character driver key in Settings > Connect; the key is stored with the existing Windows DPAPI protection and is never compiled into the application. Manual SYNC and automatic sync attempts every 15 minutes are handled in the desktop process. DEMO checks only the authenticated `/api/heartbeat.php` endpoint. API connectivity is shown only after the authenticated heartbeat verifies PDO/MySQL access. Public endpoints require HTTPS; HTTP is permitted only for localhost/loopback. Without a configured driver key, the application remains in LOCAL MODE and retains queued records. The PHP sources, XAMPP setup, protected configuration, migrations, and backend tests live in `db/`; see [db/README.md](../db/README.md).
 
 For the native installer alone, after building the Release application, run:
 

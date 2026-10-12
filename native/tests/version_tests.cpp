@@ -15,13 +15,19 @@
 #include <mutex>
 #include <thread>
 #include <QByteArray>
+#include <QCoreApplication>
 #include <QDir>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
+#include <QHostAddress>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QUuid>
 
 #include "logging/Logger.h"
@@ -31,6 +37,7 @@
 #include "providers/ScsPositionIpc.h"
 #include "providers/ScsTelemetryEventIpc.h"
 #include "session/HistoryStore.h"
+#include "sync/SyncClient.h"
 #include "sync/SyncConfiguration.h"
 #include "telemetry/JobFuelTracker.h"
 #include "telemetry/TelemetryModel.h"
@@ -1856,6 +1863,12 @@ void TestProtectedSyncConfiguration() {
     Check(nlsi::sync::SyncConfigurationStore::IsValidApiBaseUrl(configuration.api_base_url)
         && !nlsi::sync::SyncConfigurationStore::IsValidApiBaseUrl(
             QStringLiteral("http://sync.example.test/db"))
+        && nlsi::sync::SyncConfigurationStore::IsValidApiBaseUrl(
+            QStringLiteral("http://localhost:8080/nlsi_vtc"))
+        && nlsi::sync::SyncConfigurationStore::IsValidApiBaseUrl(
+            QStringLiteral("http://127.0.0.1:8080/nlsi_vtc"))
+        && !nlsi::sync::SyncConfigurationStore::IsValidApiBaseUrl(
+            QStringLiteral("http://[::1]:8080/nlsi_vtc?key=secret"))
         && nlsi::sync::SyncConfigurationStore::IsValidDeviceApiKey(key)
         && !nlsi::sync::SyncConfigurationStore::IsValidDeviceApiKey(
             QStringLiteral("CHANGE_ME")),
@@ -1936,9 +1949,171 @@ void TestProtectedSyncConfiguration() {
         "saved driver key could not be cleared without removing telemetry");
 }
 
+void TestDemoHealthCheckAndFailedSyncKeepQueue() {
+    QTemporaryDir root;
+    Check(root.isValid(), "connection test fixture directory could not be created");
+
+    QTcpServer server;
+    Check(server.listen(QHostAddress::LocalHost, 0),
+        "local API fixture could not listen on loopback");
+    int heartbeat_requests = 0;
+    int ingest_requests = 0;
+    bool reject_next_heartbeat = false;
+    QObject::connect(&server, &QTcpServer::newConnection, &server, [&] {
+        while (server.hasPendingConnections()) {
+            QTcpSocket* socket = server.nextPendingConnection();
+            socket->setProperty("requestBuffer", QByteArray());
+            QObject::connect(socket, &QTcpSocket::readyRead, socket,
+                [socket, &heartbeat_requests, &ingest_requests, &reject_next_heartbeat] {
+                    QByteArray request = socket->property("requestBuffer").toByteArray();
+                    request.append(socket->readAll());
+                    socket->setProperty("requestBuffer", request);
+                    if (socket->property("responseSent").toBool()) {
+                        return;
+                    }
+                    const qsizetype line_end = request.indexOf("\r\n");
+                    if (line_end < 0) {
+                        return;
+                    }
+                    const QByteArray request_line = request.left(line_end);
+                    QByteArray body;
+                    QByteArray status_line;
+                    if (request_line.startsWith("GET ")) {
+                        ++heartbeat_requests;
+                        if (reject_next_heartbeat) {
+                            reject_next_heartbeat = false;
+                            status_line = "HTTP/1.1 503 Service Unavailable\r\n";
+                            body = R"json({"error":"temporarily_unavailable"})json";
+                        } else {
+                            status_line = "HTTP/1.1 200 OK\r\n";
+                            body = R"json({"success":true,"database":{"status":"connected"},"device":{"status":"active"},"checked_at":"2026-10-12T00:00:00.000Z"})json";
+                        }
+                    } else if (request_line.startsWith("POST ")) {
+                        ++ingest_requests;
+                        status_line = "HTTP/1.1 503 Service Unavailable\r\n";
+                        body = R"json({"error":"temporary_failure"})json";
+                    } else {
+                        socket->disconnectFromHost();
+                        return;
+                    }
+                    socket->setProperty("responseSent", true);
+                    socket->write(status_line
+                        + QByteArray("Content-Type: application/json\r\n")
+                        + QByteArray("Content-Length: ")
+                        + QByteArray::number(body.size())
+                        + QByteArray("\r\nConnection: close\r\n\r\n")
+                        + body);
+                    socket->disconnectFromHost();
+                });
+        }
+    });
+
+    nlsi::logging::TelemetryRecorder recorder;
+    Check(recorder.Start(root.path().toStdWString()),
+        "telemetry recorder could not start for API queue fixture");
+    const QJsonObject sample{
+        {QStringLiteral("timestamp_utc"), QStringLiteral("2026-10-12T00:00:00.000Z")},
+        {QStringLiteral("provider"), QStringLiteral("NLSI")},
+        {QStringLiteral("record_type"), QStringLiteral("telemetry_sample")},
+        {QStringLiteral("normalized_fields"), QJsonObject{
+            {QStringLiteral("speed_kmh"), QJsonObject{
+                {QStringLiteral("available"), true},
+                {QStringLiteral("value"), 36.0},
+            }},
+        }},
+    };
+    Check(recorder.Enqueue(sample) && recorder.Flush() && recorder.PendingCount() == 1,
+        "API fixture telemetry record was not durably queued");
+
+    QString error;
+    const nlsi::sync::SyncConfiguration configuration{
+        QStringLiteral("http://127.0.0.1:%1/nlsi_vtc").arg(server.serverPort()),
+        QStringLiteral("AbC123xYz789"),
+        {},
+    };
+    Check(nlsi::sync::SyncConfigurationStore::Save(root.path(), configuration, &error)
+        && error.isEmpty(),
+        "loopback connection-test settings could not be saved");
+    nlsi::sync::SyncClient client(recorder, root.path());
+
+    bool health_check_finished = false;
+    bool health_check_succeeded = false;
+    QEventLoop health_check_loop;
+    QTimer health_check_timeout;
+    health_check_timeout.setSingleShot(true);
+    QObject::connect(&health_check_timeout, &QTimer::timeout,
+        &health_check_loop, &QEventLoop::quit);
+    client.TestConnection([&](bool connected, const QString&) {
+        health_check_finished = true;
+        health_check_succeeded = connected;
+        health_check_loop.quit();
+    });
+    health_check_timeout.start(5000);
+    health_check_loop.exec();
+    health_check_timeout.stop();
+    Check(health_check_finished && health_check_succeeded
+        && heartbeat_requests == 1
+        && ingest_requests == 0
+        && recorder.PendingCount() == 1,
+        "DEMO health check was not read-only or changed the pending local queue");
+
+    reject_next_heartbeat = true;
+    bool failed_health_check_finished = false;
+    bool failed_health_check_connected = true;
+    QEventLoop failed_health_check_loop;
+    QTimer failed_health_check_timeout;
+    failed_health_check_timeout.setSingleShot(true);
+    QObject::connect(&failed_health_check_timeout, &QTimer::timeout,
+        &failed_health_check_loop, &QEventLoop::quit);
+    client.TestConnection([&](bool connected, const QString&) {
+        failed_health_check_finished = true;
+        failed_health_check_connected = connected;
+        failed_health_check_loop.quit();
+    });
+    failed_health_check_timeout.start(5000);
+    failed_health_check_loop.exec();
+    failed_health_check_timeout.stop();
+    Check(failed_health_check_finished && !failed_health_check_connected
+        && client.Status().error.startsWith(QStringLiteral("Connection unavailable:"))
+        && heartbeat_requests == 2
+        && ingest_requests == 0
+        && recorder.PendingCount() == 1,
+        "a failed API health check was not reported or changed the pending local queue");
+
+    QEventLoop sync_loop;
+    QTimer sync_poll;
+    QTimer sync_timeout;
+    sync_poll.setInterval(10);
+    sync_timeout.setSingleShot(true);
+    QObject::connect(&sync_poll, &QTimer::timeout, &sync_loop, [&] {
+        if (client.Status().error.startsWith(QStringLiteral("Synchronization failed:"))) {
+            sync_loop.quit();
+        }
+    });
+    QObject::connect(&sync_timeout, &QTimer::timeout, &sync_loop, &QEventLoop::quit);
+    sync_poll.start();
+    sync_timeout.start(5000);
+    client.SyncNow();
+    sync_loop.exec();
+    sync_poll.stop();
+    sync_timeout.stop();
+    const nlsi::sync::SyncStatus final_status = client.Status();
+    Check(final_status.error.startsWith(QStringLiteral("Synchronization failed:"))
+        && heartbeat_requests == 3
+        && ingest_requests == 1
+        && recorder.PendingCount() == 1
+        && final_status.last_successful_sync.isEmpty(),
+        "a failed ingestion response acknowledged or removed a pending local record");
+
+    client.Stop();
+    Check(recorder.StopFor(std::chrono::seconds(5)),
+        "API queue fixture recorder did not stop cleanly");
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    QCoreApplication application(argc, argv);
     const std::vector<std::pair<const char*, void (*)()>> tests = {
         {"valid telemetry and units", TestValidTelemetryAndUnits},
         {"missing and invalid fields", TestMissingAndInvalidFields},
@@ -1970,6 +2145,8 @@ int main() {
         {"durable sync acknowledgement and restart recovery",
             TestSyncQueueAcknowledgementIsDurableAndIdempotent},
         {"DPAPI-protected sync configuration", TestProtectedSyncConfiguration},
+        {"read-only health check and failed sync queue preservation",
+            TestDemoHealthCheckAndFailedSyncKeepQueue},
         {"version comparison", TestVersionComparison},
     };
     try {

@@ -167,9 +167,11 @@ void SyncClient::CheckDatabase() {
         return;
     }
     heartbeat_in_flight_ = true;
+    status_.connecting = true;
     QNetworkReply* reply = network_.get(Request(QStringLiteral("heartbeat.php")));
     connect(reply, &QNetworkReply::finished, this, [this, reply] {
         heartbeat_in_flight_ = false;
+        status_.connecting = false;
         const QByteArray body = reply->readAll();
         QJsonParseError parse_error;
         const QJsonDocument document = QJsonDocument::fromJson(body, &parse_error);
@@ -340,6 +342,82 @@ void SyncClient::SyncNow() {
         status_.pending_records = recorder_.PendingCount();
         if (status_.pending_records > 0) {
             SyncNow();
+        }
+        reply->deleteLater();
+    });
+}
+
+void SyncClient::TestConnection(ConnectionTestCompletion completion) {
+    if (!status_.configured) {
+        if (completion) {
+            completion(false, QStringLiteral(
+                "Save and verify a driver key before testing the connection."));
+        }
+        return;
+    }
+    if (heartbeat_in_flight_) {
+        if (completion) {
+            completion(false, QStringLiteral(
+                "A connection check is already in progress."));
+        }
+        return;
+    }
+
+    heartbeat_in_flight_ = true;
+    status_.connecting = true;
+    QNetworkReply* reply = network_.get(Request(QStringLiteral("heartbeat.php")));
+    connect(reply, &QNetworkReply::finished, this, [this, reply,
+                                                      completion = std::move(completion)]() mutable {
+        heartbeat_in_flight_ = false;
+        status_.connecting = false;
+        const QByteArray body = reply->readAll();
+        QJsonParseError parse_error;
+        const QJsonDocument document = QJsonDocument::fromJson(body, &parse_error);
+        const QJsonObject payload = document.isObject() ? document.object() : QJsonObject{};
+        const QJsonObject database = payload.value(QStringLiteral("database")).toObject();
+        const QJsonObject device = payload.value(QStringLiteral("device")).toObject();
+        const int http_status = reply->attribute(
+            QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const bool connected = reply->error() == QNetworkReply::NoError
+            && parse_error.error == QJsonParseError::NoError
+            && payload.value(QStringLiteral("success")).toBool()
+            && database.value(QStringLiteral("status")).toString()
+                == QStringLiteral("connected")
+            && device.value(QStringLiteral("status")).toString()
+                == QStringLiteral("active");
+        if (connected) {
+            status_.database_connected = true;
+            status_.credential_rejected = false;
+            credential_valid_ = true;
+            status_.last_successful_check = payload.value(QStringLiteral("checked_at"))
+                .toString(UtcNow());
+            status_.error.clear();
+            retry_delay_seconds_ = 30;
+            if (completion) {
+                completion(true, QStringLiteral("Authenticated API health check succeeded."));
+            }
+        } else if (http_status == 401 || http_status == 403) {
+            status_.database_connected = false;
+            credential_valid_ = false;
+            status_.credential_rejected = true;
+            status_.error = http_status == 403
+                ? QStringLiteral("This driver key was revoked.")
+                : QStringLiteral("This driver key is invalid.");
+            if (completion) {
+                completion(false, status_.error);
+            }
+        } else {
+            status_.database_connected = false;
+            credential_valid_ = false;
+            const QString fallback = reply->error() == QNetworkReply::NoError
+                ? QStringLiteral("The API is temporarily unavailable.")
+                : reply->errorString();
+            SetError(QStringLiteral("Connection unavailable: %1")
+                .arg(SafeErrorText(body, fallback)), true);
+            ScheduleRetry();
+            if (completion) {
+                completion(false, status_.error);
+            }
         }
         reply->deleteLater();
     });

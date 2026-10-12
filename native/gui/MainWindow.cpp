@@ -52,9 +52,6 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override {
         if (event->type() == QEvent::Show || event->type() == QEvent::Paint) {
             if (auto* button = qobject_cast<QAbstractButton*>(watched)) {
-                if (button->objectName() == QStringLiteral("sendDemoButton")) {
-                    return QObject::eventFilter(watched, event);
-                }
                 const QString upper = button->text().toUpper();
                 if (button->text() != upper) {
                     button->setText(upper);
@@ -146,176 +143,6 @@ MainWindow::MainWindow(
     connection_indicator_ = new QLabel(QStringLiteral("DISCONNECTED"), header);
     connection_indicator_->setObjectName(QStringLiteral("statusIndicator"));
     connection_indicator_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    sync_now_button_ = new QPushButton(QStringLiteral("SYNC NOW"), header);
-    sync_now_button_->setObjectName(QStringLiteral("syncNowButton"));
-    sync_now_button_->setToolTip(
-        QStringLiteral("Upload locally queued records to the configured authenticated API."));
-    connect(sync_now_button_, &QPushButton::clicked, this, [this] {
-        telemetry_core_.SyncNow();
-    });
-    enter_driver_key_button_ = new QPushButton(QStringLiteral("ENTER YOUR KEY"), header);
-    enter_driver_key_button_->setObjectName(QStringLiteral("enterDriverKeyButton"));
-    enter_driver_key_button_->setToolTip(
-        QStringLiteral("Optionally validate a driver key with the NLSI website over HTTPS."));
-    send_demo_button_ = new QPushButton(QStringLiteral("Send Demo"), header);
-    send_demo_button_->setObjectName(QStringLiteral("sendDemoButton"));
-    send_demo_button_->setToolTip(
-        QStringLiteral("Create a clearly marked demo delivery and queue it through normal synchronization."));
-    connect(send_demo_button_, &QPushButton::clicked, this, [this] {
-        send_demo_button_->setEnabled(false);
-        QString error;
-        if (!telemetry_core_.CreateDemoDelivery(&error)) {
-            statusBar()->showMessage(
-                QStringLiteral("Demo delivery was not saved: %1").arg(error), 10000);
-            send_demo_button_->setEnabled(true);
-            return;
-        }
-        statusBar()->showMessage(
-            QStringLiteral(
-                "Demo delivery saved locally and queued for API sync. The header shows current server status."),
-            10000);
-        send_demo_button_->setEnabled(true);
-    });
-    connect(enter_driver_key_button_, &QPushButton::clicked, this, [this] {
-        QDialog dialog(this);
-        dialog.setWindowTitle(QStringLiteral("Enter your NLSI driver key"));
-        dialog.setModal(true);
-        auto* layout = new QVBoxLayout(&dialog);
-        auto* form = new QFormLayout();
-        const QString configured_api_base = telemetry_core_.DriverKeyApiBaseUrl().isEmpty()
-            ? telemetry_core_.SyncApiBaseUrl()
-            : telemetry_core_.DriverKeyApiBaseUrl();
-        auto* website_api = new QLineEdit(configured_api_base, &dialog);
-        website_api->setObjectName(QStringLiteral("driverKeyWebsiteApiBaseUrl"));
-        website_api->setPlaceholderText(QStringLiteral("https://your-domain.example/nlsi_vtc"));
-        auto* driver_key = new QLineEdit(&dialog);
-        driver_key->setObjectName(QStringLiteral("driverKeyEntry"));
-        driver_key->setEchoMode(QLineEdit::Password);
-        driver_key->setMaxLength(12);
-        driver_key->setPlaceholderText(QStringLiteral("12 letters or numbers"));
-        driver_key->setValidator(new QRegularExpressionValidator(
-            QRegularExpression(QStringLiteral("[A-Za-z0-9]{0,12}")), driver_key));
-        form->addRow(QStringLiteral("Website HTTPS API base URL"), website_api);
-        form->addRow(QStringLiteral("Driver key"), driver_key);
-        layout->addLayout(form);
-
-        auto* status = new QLabel(&dialog);
-        status->setObjectName(QStringLiteral("driverKeyValidationStatus"));
-        status->setWordWrap(true);
-        const auto update_status = [this, status] {
-            const sync::DriverKeyStatus state = telemetry_core_.DriverKeyState();
-            if (state.validation_pending) {
-                status->setText(QStringLiteral("Checking the saved driver key…"));
-            } else if (state.verified) {
-                status->setText(QStringLiteral("Verified for %1 (driver %2).")
-                    .arg(state.display_name)
-                    .arg(state.driver_id));
-            } else if (!state.error.isEmpty()) {
-                status->setText(state.error);
-            } else if (state.configured) {
-                status->setText(QStringLiteral(
-                    "A driver key is saved but has not been verified in this session."));
-            } else {
-                status->setText(QStringLiteral(
-                    "No driver key is saved. A key is optional; local telemetry continues normally."));
-            }
-        };
-        update_status();
-        layout->addWidget(status);
-
-        auto* note = new QLabel(
-            QStringLiteral(
-                "The driver key is sent only to the configured HTTPS website APIs and is "
-                "protected with Windows DPAPI for this Windows user. Website "
-                "outages do not interrupt local delivery history or record storage."),
-            &dialog);
-        note->setWordWrap(true);
-        layout->addWidget(note);
-
-        auto* actions = new QHBoxLayout();
-        auto* validate = new QPushButton(QStringLiteral("Validate and Save"), &dialog);
-        validate->setObjectName(QStringLiteral("validateDriverKeyButton"));
-        auto* clear = new QPushButton(QStringLiteral("Clear Saved Key"), &dialog);
-        clear->setObjectName(QStringLiteral("clearDriverKeyButton"));
-        QPointer<QDialog> dialog_ref(&dialog);
-        actions->addWidget(validate);
-        actions->addWidget(clear);
-        layout->addLayout(actions);
-
-        auto* close_buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
-        connect(close_buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-        layout->addWidget(close_buttons);
-
-        connect(validate, &QPushButton::clicked, &dialog, [this, website_api,
-                                                            driver_key,
-                                                            status, validate, dialog_ref] {
-            const QString submitted_key = driver_key->text();
-            const auto save_sync_settings = [this, website_api, submitted_key, status] {
-                QString sync_error;
-                if (!telemetry_core_.ConfigureSync(
-                        website_api->text(), submitted_key, &sync_error)) {
-                    status->setText(QStringLiteral("Driver key saved, but telemetry sync was not configured: %1")
-                        .arg(sync_error));
-                    return false;
-                }
-                status->setText(QStringLiteral(
-                    "Telemetry synchronization settings were saved securely. Upload status is shown in the app header."));
-                return true;
-            };
-            if (driver_key->text().trimmed().isEmpty()) {
-                status->setText(QStringLiteral("Enter a driver key to validate and configure telemetry synchronization."));
-                return;
-            }
-            validate->setEnabled(false);
-            status->setText(QStringLiteral("Validating with the NLSI website…"));
-            QPointer<QLineEdit> key_ref(driver_key);
-            QPointer<QLabel> status_ref(status);
-            QPointer<QPushButton> button_ref(validate);
-            telemetry_core_.ValidateDriverKey(
-                website_api->text(),
-                submitted_key,
-                [dialog_ref, key_ref, status_ref, button_ref,
-                 save_sync_settings](
-                    bool valid, const QString& result) {
-                    if (!dialog_ref) {
-                        return;
-                    }
-                    if (button_ref) {
-                        button_ref->setEnabled(true);
-                    }
-                    if (status_ref) {
-                        status_ref->setText(valid
-                            ? QStringLiteral("Driver key verified for %1.").arg(result)
-                            : result);
-                    }
-                    if (valid && key_ref) {
-                        key_ref->clear();
-                    }
-                    if (valid) {
-                        save_sync_settings();
-                    }
-                });
-        });
-        connect(clear, &QPushButton::clicked, &dialog, [this, &dialog, status, driver_key] {
-            if (QMessageBox::question(
-                    &dialog,
-                    QStringLiteral("Clear saved driver key"),
-                    QStringLiteral("Remove the saved driver key from this Windows user profile?"))
-                != QMessageBox::Yes) {
-                return;
-            }
-            QString error;
-            if (!telemetry_core_.ClearDriverKey(&error)) {
-                QMessageBox::warning(
-                    &dialog, QStringLiteral("Driver key was not cleared"), error);
-                return;
-            }
-            driver_key->clear();
-            status->setText(QStringLiteral(
-                "No driver key is saved. A key is optional; local telemetry continues normally."));
-        });
-        dialog.exec();
-    });
     header_layout->addWidget(active_page_title_, 0, Qt::AlignLeft | Qt::AlignVCenter);
     header_layout->addWidget(connection_indicator_, 0, Qt::AlignVCenter);
     header_layout->addWidget(header_clock_, 1);
@@ -347,10 +174,7 @@ MainWindow::MainWindow(
             QStringLiteral("events"),
             new EventsPage(this)},
     };
-    auto* settings_page = new SettingsPage(this);
-    settings_page->AddConnectControl(enter_driver_key_button_);
-    settings_page->AddConnectControl(sync_now_button_);
-    settings_page->AddConnectControl(send_demo_button_);
+    auto* settings_page = new SettingsPage(telemetry_core_, this);
     const QList<NavigationEntry> system_entries = {
         {QStringLiteral("settings"), QStringLiteral("SETTINGS"),
             QStringLiteral("settings"),
@@ -677,14 +501,6 @@ void MainWindow::RefreshState() {
             QString::fromStdWString(sync.sync_error));
     }
     connection_indicator_->setToolTip(tooltip);
-    sync_now_button_->setEnabled(sync.sync_configured && !sync.sync_in_progress);
-    sync_now_button_->setToolTip(sync.sync_configured
-        ? (sync.sync_in_progress
-            ? QStringLiteral("Synchronization is in progress.")
-            : QStringLiteral("Attempt synchronization of %1 locally queued record(s).")
-                .arg(sync.sync_pending_count))
-        : QStringLiteral(
-            "Local mode is active. Use Enter Your Key in Settings > Connect to configure the HTTPS endpoint and device key."));
     if (!sync.sync_error.empty()) {
         statusBar()->showMessage(
             QStringLiteral("Synchronization issue: %1")

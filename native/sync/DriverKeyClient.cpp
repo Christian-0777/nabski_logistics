@@ -54,16 +54,21 @@ void DriverKeyClient::ValidateAndSave(
     const QString& driver_key,
     Completion completion) {
     const QString endpoint = website_api_base_url.trimmed();
-    const QString key = driver_key.trimmed();
+    QString key = driver_key.trimmed();
     if (!SyncConfigurationStore::IsValidApiBaseUrl(endpoint)) {
         if (completion) {
-            completion(false, QStringLiteral("Enter a valid HTTPS website API URL."));
+            completion(false, QStringLiteral(
+                "Enter a valid HTTPS or loopback HTTP website API URL."));
         }
         return;
     }
+    if (key.isEmpty()) {
+        key = configuration_.driver_key;
+    }
     if (!SyncConfigurationStore::IsValidDriverKey(key)) {
         if (completion) {
-            completion(false, QStringLiteral("Enter a 12-character alphanumeric driver key."));
+            completion(false, QStringLiteral(
+                "Enter a 12-character alphanumeric driver key, or use the saved key."));
         }
         return;
     }
