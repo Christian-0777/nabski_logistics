@@ -14,10 +14,19 @@ SPEC.loader.exec_module(BUILDER)
 
 class NativeReleasePackagingTests(unittest.TestCase):
     def test_version_and_automatic_plugin_installation_policy(self) -> None:
-        self.assertEqual("1.6.3", BUILDER.VERSION)
+        self.assertEqual("1.6.4", BUILDER.VERSION)
         self.assertEqual("beta", BUILDER.CHANNEL)
         self.assertEqual("beta", BUILDER.INSTALL_CHANNEL)
-        self.assertEqual("v1.6.3-beta", BUILDER.RELEASE_TAG)
+        self.assertEqual("v1.6.4-beta", BUILDER.RELEASE_TAG)
+        app_resource = (ROOT / "native" / "resources" / "app.rc").read_text(
+            encoding="utf-8"
+        )
+        app_manifest = (ROOT / "native" / "resources" / "app.manifest").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("FILEVERSION 1,6,4,0", app_resource)
+        self.assertIn('VALUE "ProductVersion", "1.6.4-beta\\0"', app_resource)
+        self.assertIn('version="1.6.4.0"', app_manifest)
         self.assertIn("Qt6Concurrent.dll", BUILDER.REQUIRED_RUNTIME_FILES)
         self.assertEqual(
             r"C:\Program Files\NLSI Exclusive Logbook",

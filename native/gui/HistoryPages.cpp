@@ -812,19 +812,23 @@ ActiveModsPage::ActiveModsPage(
     refresh_timer_->setInterval(1000);
     connect(refresh_timer_, &QTimer::timeout, this, [this] { RefreshLogs(); });
     RefreshLogs();
-    refresh_timer_->start();
 }
 
 void ActiveModsPage::showEvent(QShowEvent* event) {
     StatePage::showEvent(event);
     RefreshLogs();
+    refresh_timer_->start();
 }
 
 void ActiveModsPage::hideEvent(QHideEvent* event) {
+    refresh_timer_->stop();
     StatePage::hideEvent(event);
 }
 
 void ActiveModsPage::RefreshLogs() {
+    if (window()->isMinimized()) {
+        return;
+    }
     const QString documents = documents_directory_.isEmpty()
         ? QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)
         : documents_directory_;

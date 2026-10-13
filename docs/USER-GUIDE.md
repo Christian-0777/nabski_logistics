@@ -2,7 +2,7 @@
 
 ## Installation and launch
 
-The native v1.6.3-beta application is built for Windows x64 with Qt 6.12 and MSVC 2022. It opens at the existing 900×600 minimum window size and can start without a game; live values remain unavailable until TruckSim GPS telemetry is available. The retained Python implementation is a separate legacy reference and is not bundled in the native application.
+The native v1.6.4-beta application is built for Windows x64 with Qt 6.12 and MSVC 2022. It opens at the existing 900×600 minimum window size and can start without a game; live values remain unavailable until TruckSim GPS telemetry is available. The retained Python implementation is a separate legacy reference and is not bundled in the native application.
 
 ## Navigation
 
@@ -25,7 +25,7 @@ The shared page header displays Asia/Manila date and live time to millisecond pr
 
 Dates use `MM/DD/YY`, decimal values use thousands separators and two decimal places, and integer values use thousands separators. Completed jobs can be exported to a paginated PDF; exports retain available earnings, route, dates, and recorded statistics without changing job history. TXT logs continue alongside versioned `.nlsi` JSON Lines logs; revision-13 raw samples are stored in daily telemetry `.nlsi` files. See [NLSI log format](NLSI-LOG-FORMAT.md).
 
-The current application version, **v1.6.3-beta**, is shown on the About page and comes from the build's version metadata. The release channel is **Beta**. The SCS SDK version and TruckSim GPS mapping revision are separate from the application version.
+The current application version, **v1.6.4-beta**, is shown on the About page and comes from the build's version metadata. The release channel is **Beta**. The SCS SDK version and TruckSim GPS mapping revision are separate from the application version.
 
 ## Configuration and privacy
 
@@ -37,7 +37,7 @@ Settings changes use the established Windows QSettings preference store and are 
 
 ### Telemetry says disconnected
 
-Confirm the TruckSim GPS telemetry plugin is installed in the game's matching architecture plugin folder and that the game is running. Setup attempts this automatically for detected Steam game folders and records installation results under the application directory's `logs\trucksim-plugin-status.txt`. Check Settings → Providers for the exact shared-memory mapping, revision, freshness result, sync state, and Windows error. A missing map can mean that the plugin is not installed or the game/plugin has not initialized; unsupported revisions are rejected rather than decoded with guessed offsets. Live ETS2/ATS behavior has not been tested for v1.6.3-beta.
+Confirm the TruckSim GPS telemetry plugin is installed in the game's matching architecture plugin folder and that the game is running. Setup attempts this automatically for detected Steam game folders and records installation results under the application directory's `logs\trucksim-plugin-status.txt`. Check Settings → Providers for the exact shared-memory mapping, revision, freshness result, sync state, and Windows error. A missing map can mean that the plugin is not installed or the game/plugin has not initialized; unsupported revisions are rejected rather than decoded with guessed offsets. Live ETS2/ATS behavior has not been tested for v1.6.4-beta.
 
 ### Known limitations
 

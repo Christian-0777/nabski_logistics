@@ -9,7 +9,7 @@ publish or upload anything.
 ## Build and verify
 
 Configure a version-specific Visual Studio 2022 x64 CMake directory such as
-`build\cmake-v1.6.3-beta`. Do not reuse or reconfigure the existing
+`build\cmake-v1.6.4-beta`. Do not reuse or reconfigure the existing
 `build\cmake` cache or overwrite completed earlier release outputs.
 
 ```bat
@@ -23,19 +23,18 @@ metadata, official TruckSim GPS x64/x86 plugin hashes, license notices, and the
 automatic safe-install policy before staging Qt/MSVC dependencies and
 compiling the Inno Setup definition.
 
-Expected outputs for v1.6.3-beta:
+Expected outputs for v1.6.4-beta:
 
-- `build\releases\v1.6.3-beta\NLSI-Exclusive-Logbook.exe`
-- `build\releases\v1.6.3-beta\NLSI-Exclusive-Logbook-v1.6.3-beta-Setup.exe`
-- `build\intermediate\installer-payload-v1.6.3-beta`
+- `build\releases\v1.6.4-beta\NLSI-Exclusive-Logbook.exe`
+- `build\releases\v1.6.4-beta\NLSI-Exclusive-Logbook-v1.6.4-beta-Setup.exe`
+- `build\intermediate\installer-payload-v1.6.4-beta`
 
-Previously built release artifacts remain unchanged. The v1.6.3 Beta build
-adds pending Config edits with one-click save and one-click game-default reset,
-without changing `.nlsi` record compatibility or local telemetry queues. No
-authenticated backend or gameplay upload endpoint is implemented; release
-notes and the installer must continue to describe synchronization as local
-Pending only. The updater reads public release metadata but does not download or
-install updates.
+Previously built release artifacts remain unchanged. v1.6.4 Beta renders only
+the active UI page on periodic refresh and pauses display refresh while
+minimized; Active Mods fallback polling pauses while hidden or minimized.
+Telemetry collection, local persistence, delivery synchronization, and `.nlsi`
+compatibility are unchanged. The updater reads public release metadata but
+does not download or install updates.
 
 Fresh Alpha, Beta, and Stable installers default to
 `C:\Program Files\NLSI Exclusive Logbook`. A validated existing installation

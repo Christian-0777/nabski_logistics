@@ -1,6 +1,6 @@
 # NLSI Exclusive Logbook
 
-NLSI Exclusive Logbook is a native Windows desktop telemetry and logging application for Euro Truck Simulator 2 (ETS2) and American Truck Simulator (ATS). Version 1.6.3-beta is built with C++ and Qt 6 Widgets. The existing Python implementation is retained as reference-only code and is not part of the active native telemetry pipeline.
+NLSI Exclusive Logbook is a native Windows desktop telemetry and logging application for Euro Truck Simulator 2 (ETS2) and American Truck Simulator (ATS). Version 1.6.4-beta is built with C++ and Qt 6 Widgets. The existing Python implementation is retained as reference-only code and is not part of the active native telemetry pipeline.
 
 ## What It Does
 
@@ -33,7 +33,7 @@ Plugin binaries and SDK components remain subject to their applicable licenses. 
 ## Current Release
 
 - **Product:** NLSI Exclusive Logbook
-- **Version:** v1.6.3-beta
+- **Version:** v1.6.4-beta
 - **Release channel:** Beta
 - **Supported games:** ETS2 and ATS
 - **Technology:** C++, Qt 6 Widgets, CMake

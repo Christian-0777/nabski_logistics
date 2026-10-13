@@ -2,6 +2,12 @@
 
 Release history is based on the repository's tagged v0.1.0 source and the confirmed v0.2.0/v0.3.0 release changes.
 
+## v1.6.4-beta
+
+- Updates native release and installer metadata to v1.6.4-beta.
+- Limits periodic state/history rendering to the visible page and refreshes it immediately when navigating; display timers pause while minimized.
+- Pauses Active Mods' fallback game-log polling while that page is hidden or the application is minimized; file watching and telemetry capture remain active.
+
 ## v1.6.3-beta
 
 - Removes the read-only summary from Settings > Config and keeps all configuration controls editable.

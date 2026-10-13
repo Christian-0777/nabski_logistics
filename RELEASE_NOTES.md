@@ -1,23 +1,20 @@
-# NLSI Exclusive Logbook v1.6.3-beta
+# NLSI Exclusive Logbook v1.6.4-beta
 
-This beta updates Settings > Config to support independent pending edits and
-one-click save or reset, while keeping preferences in the existing settings
-store rather than telemetry records.
+This beta reduces unnecessary UI work when pages are inactive without changing
+telemetry capture, local record persistence, or synchronization behavior.
 
 ## What's changed
 
-- Removes the read-only `--` telemetry summary from Config while retaining
-  every editable configuration option.
-- Keeps dropdown edits visible and unsaved until Save commits the complete
-  selected configuration in one settings-store sync.
-- Adds one-click Reset for the selected game's established defaults, including
-  ETS2 Metric/EUR and ATS Imperial/USD values.
-- Reports validation and persistence errors without presenting a false
-  success; refreshes no longer overwrite drafts.
-- Preserves `.nlsi` schemas, telemetry/history records, active mods, and
-  synchronization queues.
-- Aligns app/About, `version.json`, Windows executable, installer, and release
-  metadata to v1.6.3 Beta.
+- Refreshes only the visible page at the existing 4 Hz UI cadence and updates
+  it immediately when navigating; UI refresh and clock timers pause while the
+  window is minimized.
+- Stops the Active Mods fallback game-log poll while the page is hidden and
+  skips scans while the application is minimized; file notifications remain
+  enabled.
+- Retains bounded local telemetry queues, batching, delivery-end persistence,
+  `.nlsi` compatibility, and the existing offline synchronization queue.
+- Aligns `version.json`, About/runtime metadata, Windows executable, installer,
+  tests, and release documentation to v1.6.4 Beta.
 
 ## Verification
 

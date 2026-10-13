@@ -281,6 +281,7 @@ void MainWindow::ActivatePage(const QString& key) {
     if (!page) {
         return;
     }
+    active_page_ = page;
     page_stack_->setCurrentWidget(page_scroll_areas_.value(key));
     active_page_title_->setText(navigation_buttons_.value(key)->text().toUpper());
     active_page_title_->setProperty(
@@ -293,11 +294,32 @@ void MainWindow::ActivatePage(const QString& key) {
         it.value()->setChecked(selected);
         it.value()->setIcon(NavigationIcon(it.key(), selected));
     }
+    if (refresh_timer_->isActive()) {
+        RefreshState();
+    }
 }
 
 void MainWindow::resizeEvent(QResizeEvent* event) {
     QMainWindow::resizeEvent(event);
     RefreshClock();
+}
+
+void MainWindow::changeEvent(QEvent* event) {
+    QMainWindow::changeEvent(event);
+    if (event->type() != QEvent::WindowStateChange) {
+        return;
+    }
+    if (isMinimized()) {
+        refresh_timer_->stop();
+        clock_timer_->stop();
+        return;
+    }
+    if (isVisible()) {
+        RefreshClock();
+        RefreshState();
+        refresh_timer_->start();
+        clock_timer_->start();
+    }
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
@@ -460,9 +482,9 @@ void MainWindow::RefreshState() {
             5000);
     }
 
-    for (StatePage* page : pages_) {
-        page->UpdateState(state);
-        page->UpdateHistory(history);
+    if (active_page_) {
+        active_page_->UpdateState(state);
+        active_page_->UpdateHistory(history);
     }
 
     const auto& sync = state.providers;

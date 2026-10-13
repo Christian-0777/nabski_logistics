@@ -3,17 +3,17 @@
 #define AppChannel "beta"
 #endif
 #ifndef AppFileVersion
-#define AppFileVersion 1.6.3.0
+#define AppFileVersion 1.6.4.0
 #endif
 #ifndef ReleaseLabel
-#define ReleaseLabel "1.6.3-beta"
+#define ReleaseLabel "1.6.4-beta"
 #endif
 #define DefaultApplicationDir "C:\Program Files\NLSI Exclusive Logbook"
 #ifndef ReleaseTag
-#define ReleaseTag "v1.6.3-beta"
+#define ReleaseTag "v1.6.4-beta"
 #endif
 #ifndef ReleasePayload
-#define ReleasePayload "build\intermediate\installer-payload-v1.6.3-beta"
+#define ReleasePayload "build\intermediate\installer-payload-v1.6.4-beta"
 #endif
 #define AppPublisher "Nabski Logistics and Solutions Inc."
 #define AppURL "https://github.com/Christian-0777/nlsi_telemetry"

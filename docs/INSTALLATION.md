@@ -1,10 +1,10 @@
 # Installation
 
-## Native v1.6.3-beta
+## Native v1.6.4-beta
 
 - Windows x64; no Python runtime is required for the native desktop application.
 - A fresh install defaults to `C:\Program Files\NLSI Exclusive Logbook`. An existing installation or user-selected path is retained during upgrades.
-- Setup displays whether it detected an existing installation and, when available, its installed version before updating to v1.6.3-beta. The publisher is Nabski Logistics and Solutions Inc.
+- Setup displays whether it detected an existing installation and, when available, its installed version before updating to v1.6.4-beta. The publisher is Nabski Logistics and Solutions Inc.
 - Updates replace application files in place and retain existing configuration and logs. Existing Start Menu/Desktop shortcut options and Terms and Conditions/Privacy Policy acceptance remain available.
 - Setup automatically installs the hash-verified official TruckSim GPS x64/x86 plugin into matching architecture folders for detected Steam ETS2/ATS installations. An outdated DLL is atomically replaced; the prior DLL is preserved as a recovery copy. A locked destination or failed copy stops setup and is reported in the installer/plugin logs. The separate TruckSim GPS Telemetry Server GUI is not bundled, opened, or required.
 - If no supported ETS2/ATS game architecture is found, the application installation can still complete; the plugin helper records that no game plugin was installed in its status log. Run setup again after installing a supported game to install the plugin.

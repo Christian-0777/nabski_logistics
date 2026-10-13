@@ -391,6 +391,16 @@ bool TestModLogParsingAndSourceLinks() {
         std::cerr << "Repeated reinitialization created duplicate log monitors.\n";
         return false;
     }
+    active_mods_page.hide();
+    if (timers.front()->isActive()) {
+        std::cerr << "The hidden Active Mods page kept polling game logs.\n";
+        return false;
+    }
+    active_mods_page.show();
+    if (!timers.front()->isActive()) {
+        std::cerr << "The Active Mods log monitor did not resume when shown.\n";
+        return false;
+    }
     return true;
 }
 
@@ -2428,7 +2438,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     nlsi::telemetry::TelemetryCore telemetry_core;
-    nlsi::gui::MainWindow window(L"NLSI Exclusive Logbook", L"v1.6.3-beta",
+    nlsi::gui::MainWindow window(L"NLSI Exclusive Logbook", L"v1.6.4-beta",
         telemetry_core);
 
     if (window.size() != QSize(900, 600) ||
@@ -2457,6 +2467,18 @@ int main(int argc, char** argv) {
     if (history_refresh_timer->interval() != 250
         || history_refresh_timer->thread() != window.thread()) {
         std::cerr << "Persisted history is not polled for GUI refresh on the GUI thread.\n";
+        return 1;
+    }
+    window.setWindowState(Qt::WindowMinimized);
+    QApplication::processEvents();
+    if (!window.isMinimized() || history_refresh_timer->isActive()) {
+        std::cerr << "GUI refresh polling did not pause while the window was minimized.\n";
+        return 1;
+    }
+    window.setWindowState(Qt::WindowNoState);
+    QApplication::processEvents();
+    if (!history_refresh_timer->isActive()) {
+        std::cerr << "GUI refresh polling did not resume when the window was restored.\n";
         return 1;
     }
     if (!window.findChildren<QLabel*>(QStringLiteral("versionBadge")).isEmpty()) {
