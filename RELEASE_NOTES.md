@@ -1,3 +1,43 @@
+# Rebuild Notice — NLSI Exclusive Logbook Beta
+
+## Why the application is being rebuilt
+
+The current application has continued to crash when a game is opened. Repeated attempts to diagnose and patch the existing build have not produced a sufficiently reliable result. As this project is developed with limited time, hardware, and AI-assistance credits, continuing the same cycle of debugging is not a sustainable use of the resources available.
+
+The decision is to rebuild the application from a cleaner baseline rather than keep spending limited resources on repeated patches to the existing implementation. This is a practical development decision, not a claim that the root cause has been identified. A rebuild does **not** automatically mean the crash is fixed.
+
+## What the rebuild is intended to improve
+
+- Establish a cleaner, easier-to-validate application baseline.
+- Re-check application startup and game-detection behavior.
+- Revalidate the SCS telemetry plugin and dashboard communication path.
+- Re-run automated tests and build the application and architecture-matched plugin DLLs.
+- Prepare a fresh installer that supports a clean installation and replaces the previous NLSI application files and managed plugin DLLs during a supported update.
+- Document known limitations and distinguish successful compilation from actual ETS2/ATS gameplay validation.
+
+These are rebuild goals. Each item must be verified before it is described as completed for a particular release. No specific crash fix, successful live-game session, or installer test is claimed by this notice.
+
+## Important installation requirement
+
+**Completely uninstall the currently installed NLSI Exclusive Logbook version before installing the rebuilt version. Do not install the rebuilt version over the old application.**
+
+### Rebuild installation guide
+
+1. **Back up important data.** Copy any logs, job/session history, exports, or configuration you want to keep. The usual per-user data location is `%LOCALAPPDATA%\NLSI\Exclusive Logbook`, but verify the location used by your installed version.
+2. **Close all related processes.** Exit NLSI Exclusive Logbook and fully close Euro Truck Simulator 2 and American Truck Simulator.
+3. **Uninstall the existing application.** Open Windows **Settings → Apps → Installed apps** (or **Apps & features**), select NLSI Exclusive Logbook, and choose **Uninstall**.
+4. **Finish removal before proceeding.** If Windows reports locked files, restart the computer and confirm the old application has been removed. Do not manually remove unrelated files or third-party telemetry plugins.
+5. **Run the rebuilt installer.** Install the new Beta only after the previous application has been uninstalled. Follow any administrator prompts for protected installation and game plugin directories.
+6. **Check plugin installation.** Verify the detected ETS2/ATS paths and matching architecture. Only NLSI-managed plugin files should be updated; TruckersBook and other third-party plugins must remain untouched.
+7. **Test one game at a time.** Start NLSI, launch ETS2, and check detection and telemetry. If that succeeds, close ETS2 and test ATS separately. Try a short session before relying on the application.
+8. **Restore data selectively.** Restore only backed-up records or configuration that the rebuilt version explicitly supports. Do not copy old EXEs or DLLs into the new installation.
+
+## Verification status
+
+This notice records the decision and migration guidance only. The rebuilt application, plugin DLLs, installer, clean-install path, update path, and live gameplay must each be verified independently. Until that verification is recorded for a named version, the application remains **Beta / active development**.
+
+---
+
 # NLSI Exclusive Logbook v1.6.4-beta
 
 This beta reduces unnecessary UI work when pages are inactive without changing
