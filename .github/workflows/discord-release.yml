@@ -1,46 +1,149 @@
+name: Discord Release Notification
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  notify-discord:
+    runs-on: ubuntu-latest
+
+    steps:
       - name: Send release notification
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        continue-on-error: true
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TITLE: ${{ github.event.release.name }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+          RELEASE_AUTHOR: ${{ github.event.release.author.login }}
+          RELEASE_URL: ${{ github.event.release.html_url }}
+          RELEASE_DATE: ${{ github.event.release.published_at }}
+          REPOSITORY: ${{ github.repository }}
+          IS_PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
           python3 - <<'PY'
-          ...
+          import json
+          import os
+          import sys
+          import urllib.request
+          import urllib.error
+
+          webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
+
+          if not webhook_url:
+              print("Missing GitHub Actions secret: DISCORD_WEBHOOK_URL.", file=sys.stderr)
+              sys.exit(1)
+
+          # Validate the endpoint format without printing the URL or token.
+          if not webhook_url.startswith("https://discord.com/api/webhooks/"):
+              print(
+                  "The configured webhook URL does not match the expected "
+                  "Discord incoming webhook format. Check the repository secret.",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          tag = os.environ.get("RELEASE_TAG", "")
+          title = os.environ.get("RELEASE_TITLE", "").strip() or tag
+          body = os.environ.get("RELEASE_BODY", "").strip()
+          author = os.environ.get("RELEASE_AUTHOR", "Unknown")
+          release_url = os.environ.get("RELEASE_URL", "")
+          release_date = os.environ.get("RELEASE_DATE", "")
+          repository = os.environ.get("REPOSITORY", "")
+          is_prerelease = os.environ.get("IS_PRERELEASE", "").lower() == "true"
+
+          # Discord embed limits: title 256, description 4096,
+          # field value 1024, footer 2048.
+          description = body or "No release notes were provided."
+          description = description[:4096]
+
+          status = "BETA / PRE-RELEASE" if is_prerelease else "RELEASE"
+          embed = {
+              "title": f"{title} ({status})"[:256],
+              "url": release_url,
+              "description": description,
+              "fields": [
+                  {
+                      "name": "Version",
+                      "value": tag[:1024] or "Not specified",
+                      "inline": True,
+                  },
+                  {
+                      "name": "Repository",
+                      "value": repository[:1024] or "Not specified",
+                      "inline": True,
+                  },
+                  {
+                      "name": "Author",
+                      "value": author[:1024] or "Unknown",
+                      "inline": True,
+                  },
+                  {
+                      "name": "Published",
+                      "value": release_date[:1024] or "Not specified",
+                      "inline": False,
+                  },
+              ],
+              "footer": {"text": "NLSI Exclusive Logbook • GitHub Releases"},
+          }
+
+          payload = {
+              "username": "NLSI Release Notifications",
+              "allowed_mentions": {"parse": []},
+              "embeds": [embed],
+          }
+
+          request = urllib.request.Request(
+              webhook_url,
+              data=json.dumps(payload).encode("utf-8"),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+
           try:
               with urllib.request.urlopen(request, timeout=15) as response:
                   if not 200 <= response.status < 300:
-                      print(f"Discord rejected the notification (HTTP {response.status}).", file=sys.stderr)
-                      try:
-                          body = response.read().decode("utf-8", errors="replace")
-                          if body:
-                              print("Response body:", body, file=sys.stderr)
-                      except Exception:
-                          pass
-                      try:
-                          headers = dict(response.getheaders())
-                          print("Response headers:", headers, file=sys.stderr)
-                      except Exception:
-                          pass
+                      print(
+                          f"Discord rejected the notification (HTTP {response.status}).",
+                          file=sys.stderr,
+                      )
                       sys.exit(1)
+
+                  print(
+                      f"Discord accepted the release notification (HTTP {response.status})."
+                  )
+
           except urllib.error.HTTPError as error:
-              print(f"Discord rejected the notification (HTTP {error.code}).", file=sys.stderr)
+              print(
+                  f"Discord rejected the notification (HTTP {error.code}).",
+                  file=sys.stderr,
+              )
+
+              # Limit diagnostics and do not print request URLs or headers.
               try:
-                  err_body = error.read().decode("utf-8", errors="replace")
-                  if err_body:
-                      print("Error body:", err_body, file=sys.stderr)
+                  error_body = error.read(2048).decode("utf-8", errors="replace")
+                  if error_body:
+                      print(f"Discord response: {error_body[:1000]}", file=sys.stderr)
               except Exception:
                   pass
-              try:
-                  print("Response headers:", error.headers, file=sys.stderr)
-              except Exception:
-                  pass
+
               sys.exit(1)
-          except urllib.error.URLError as e:
-              print("Could not connect to the Discord webhook.", file=sys.stderr)
-              print(f"URLError details: {e}", file=sys.stderr)
+
+          except urllib.error.URLError as error:
+              reason = str(error.reason)
+              print(
+                  f"Could not connect to Discord. Reason: {reason[:300]}",
+                  file=sys.stderr,
+              )
               sys.exit(1)
-          except (TimeoutError, ValueError) as e:
-              print("The Discord webhook request could not be completed.", file=sys.stderr)
-              print(f"Details: {e}", file=sys.stderr)
+
+          except (TimeoutError, ValueError, OSError) as error:
+              print(
+                  f"The Discord webhook request failed ({type(error).__name__}).",
+                  file=sys.stderr,
+              )
               sys.exit(1)
-          ...
           PY
