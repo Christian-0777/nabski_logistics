@@ -11,6 +11,7 @@ permissions:
 jobs:
   announce:
     runs-on: ubuntu-latest
+    timeout-minutes: 2
 
     steps:
       - name: Announce GitHub Release on Discord
@@ -23,22 +24,35 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           IS_PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
-          python - <<'PY'
+          python3 - <<'PY'
           import json
           import os
+          import sys
+          import urllib.error
           import urllib.request
 
-          webhook = os.environ["DISCORD_WEBHOOK_URL"]
+          webhook = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
+
+          if not webhook:
+              sys.exit(
+                  "DISCORD_WEBHOOK_URL is missing. "
+                  "Configure it in GitHub Actions repository secrets."
+              )
+
           name = os.environ.get("RELEASE_NAME") or os.environ["RELEASE_TAG"]
           tag = os.environ["RELEASE_TAG"]
           url = os.environ["RELEASE_URL"]
           body = os.environ.get("RELEASE_BODY") or "No release notes provided."
           repo = os.environ["REPOSITORY"]
-          prerelease = os.environ.get("IS_PRERELEASE") == "true"
+          prerelease = os.environ.get("IS_PRERELEASE", "").lower() == "true"
 
-          # Keep the Discord embed within its description limit.
-          body = body[:3500]
-          title = f"{'🧪 Beta Release' if prerelease else '🚀 New Release'}: {name}"
+          # Discord embed descriptions have a 4096-character limit.
+          # Leave room for a truncation notice.
+          if len(body) > 3500:
+              body = body[:3460] + "\n\n… Release notes truncated. See the full release."
+
+          title_prefix = "🧪 Beta Release" if prerelease else "🚀 New Release"
+          title = f"{title_prefix}: {name}"
           if len(title) > 256:
               title = title[:253] + "..."
 
@@ -51,25 +65,92 @@ jobs:
                   "description": body,
                   "color": 15158332 if prerelease else 5763719,
                   "fields": [
-                      {"name": "Version", "value": f"`{tag}`", "inline": True},
-                      {"name": "Repository", "value": repo, "inline": True}
+                      {
+                          "name": "Version",
+                          "value": f"`{tag[:200]}`",
+                          "inline": True
+                      },
+                      {
+                          "name": "Repository",
+                          "value": repo[:1024],
+                          "inline": True
+                      },
+                      {
+                          "name": "Release Type",
+                          "value": "Beta / Pre-release" if prerelease else "Release",
+                          "inline": True
+                      }
                   ],
-                  "footer": {"text": "NLSI Exclusive Logbook • GitHub Releases"}
+                  "footer": {
+                      "text": "NLSI Exclusive Logbook • GitHub Releases"
+                  }
               }]
           }
 
           request = urllib.request.Request(
               webhook,
               data=json.dumps(payload).encode("utf-8"),
-              headers={"Content-Type": "application/json"},
+              headers={
+                  "Content-Type": "application/json",
+                  "User-Agent": (
+                      "DiscordBot "
+                      "(https://github.com/Christian-0777/nlsi_telemetry, 1.0)"
+                  )
+              },
               method="POST"
           )
 
-          with urllib.request.urlopen(request, timeout=20) as response:
-              if response.status not in (200, 204):
-                  raise RuntimeError(
-                      f"Discord webhook failed with HTTP {response.status}"
+          try:
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  if response.status not in (200, 204):
+                      sys.exit(
+                          f"Discord webhook returned unexpected HTTP "
+                          f"{response.status}."
+                      )
+
+              print(f"Release announcement sent successfully for {tag}.")
+
+          except urllib.error.HTTPError as error:
+              # Do not print the request URL: it contains the webhook secret.
+              try:
+                  response_body = error.read(1000).decode(
+                      "utf-8", errors="replace"
+                  )
+              except Exception:
+                  response_body = ""
+
+              print(
+                  f"Discord rejected the notification: HTTP {error.code}.",
+                  file=sys.stderr
+              )
+
+              if error.code == 403 and "1010" in response_body:
+                  print(
+                      "Discord edge protection blocked the request (error 1010). "
+                      "Verify the webhook is current, then try a newly created "
+                      "webhook. If the problem persists, use a Discord bot API "
+                      "integration or contact Discord support.",
+                      file=sys.stderr
+                  )
+              elif error.code == 401 or error.code == 404:
+                  print(
+                      "Check that DISCORD_WEBHOOK_URL contains the complete, "
+                      "current webhook URL. Recreate the webhook if necessary "
+                      "and update the GitHub secret.",
+                      file=sys.stderr
+                  )
+              else:
+                  print(
+                      f"Discord response: {response_body or 'No response body.'}",
+                      file=sys.stderr
                   )
 
-          print(f"Release announcement sent for {tag}")
+              sys.exit(1)
+
+          except urllib.error.URLError as error:
+              print(
+                  f"Could not connect to Discord: {error.reason}",
+                  file=sys.stderr
+              )
+              sys.exit(1)
           PY
