@@ -1,0 +1,96 @@
+name: Discord release notification
+
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+jobs:
+  notify-discord:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send release notification
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import sys
+          import urllib.error
+          import urllib.request
+
+          webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "")
+          if not webhook_url:
+              print("Required secret DISCORD_WEBHOOK_URL is not configured.", file=sys.stderr)
+              sys.exit(1)
+          if not webhook_url.lower().startswith("https://"):
+              print("DISCORD_WEBHOOK_URL must be an HTTPS webhook URL.", file=sys.stderr)
+              sys.exit(1)
+
+          with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as event_file:
+              release = json.load(event_file)["release"]
+
+          tag = release.get("tag_name") or "Unknown tag"
+          release_title = release.get("name") or tag
+          release_author = (release.get("author") or {}).get("login") or "Unknown"
+          published_at = release.get("published_at") or "Unknown"
+          release_url = release.get("html_url") or ""
+          notes = release.get("body") or "No release notes provided."
+
+          beta_pattern = re.compile(r"(?:^|[\s._-])(?:alpha|beta|preview|rc)(?:[\s._-]?\d|$)", re.IGNORECASE)
+          is_beta = bool(release.get("prerelease")) or any(
+              beta_pattern.search(value) for value in (tag, release_title)
+          )
+
+          max_description_length = 4000
+          if len(notes) > max_description_length:
+              notes = notes[:max_description_length - 20] + "\n\n[Release notes truncated]"
+
+          embed = {
+              "title": f"NLSI Exclusive Logbook - {release_title}"[:256],
+              "url": release_url,
+              "description": notes,
+              "color": 15105570 if is_beta else 5763719,
+              "fields": [
+                  {"name": "Tag", "value": tag[:1024], "inline": True},
+                  {"name": "Release author", "value": release_author[:1024], "inline": True},
+                  {"name": "Published", "value": published_at[:1024], "inline": True},
+              ],
+          }
+          if is_beta:
+              embed["fields"].append({"name": "Status", "value": "Beta release", "inline": True})
+
+          payload = json.dumps(
+              {"embeds": [embed], "allowed_mentions": {"parse": []}}
+          ).encode("utf-8")
+          try:
+              request = urllib.request.Request(
+                  webhook_url,
+                  data=payload,
+                  headers={"Content-Type": "application/json"},
+                  method="POST",
+              )
+          except ValueError:
+              print("DISCORD_WEBHOOK_URL is not a valid webhook URL.", file=sys.stderr)
+              sys.exit(1)
+
+          try:
+              with urllib.request.urlopen(request, timeout=15) as response:
+                  if not 200 <= response.status < 300:
+                      print(f"Discord rejected the notification (HTTP {response.status}).", file=sys.stderr)
+                      sys.exit(1)
+          except urllib.error.HTTPError as error:
+              print(f"Discord rejected the notification (HTTP {error.code}).", file=sys.stderr)
+              sys.exit(1)
+          except urllib.error.URLError:
+              print("Could not connect to the Discord webhook.", file=sys.stderr)
+              sys.exit(1)
+          except (TimeoutError, ValueError):
+              print("The Discord webhook request could not be completed.", file=sys.stderr)
+              sys.exit(1)
+
+          print("Discord release notification sent.")
+          PY
