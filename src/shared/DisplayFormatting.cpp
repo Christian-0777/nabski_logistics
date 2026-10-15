@@ -7,6 +7,8 @@
 #include <QDateTime>
 #include <QLocale>
 
+#include "MeasurementFormatting.h"
+
 namespace nlsi {
 namespace {
 
@@ -70,50 +72,12 @@ QString formatFixedNumber(const QString& valueText, const QString& unit, int dec
 
 QString formatCurrencyEuro(double value)
 {
-    if (!std::isfinite(value))
-    {
-        return unavailable;
-    }
-    QString amount = QLocale::c().toString(value, 'f', 2);
-    const bool isNegative = amount.startsWith('-');
-    if (isNegative)
-    {
-        amount.remove(0, 1);
-    }
-    const int decimalIndex = amount.indexOf('.');
-    QString integerPart = decimalIndex >= 0 ? amount.left(decimalIndex) : amount;
-    const QString fractionPart = decimalIndex >= 0 ? amount.mid(decimalIndex + 1) : QString();
-    QString grouped;
-    int pos = 0;
-    for (int index = integerPart.size() - 1; index >= 0; --index)
-    {
-        if (pos > 0 && pos % 3 == 0)
-        {
-            grouped.prepend(",");
-        }
-        grouped.prepend(integerPart.at(index));
-        ++pos;
-    }
-    if (fractionPart.isEmpty())
-    {
-        return QString("€%1%2").arg(isNegative ? "-" : "").arg(grouped);
-    }
-    return QString("€%1%2.%3").arg(isNegative ? "-" : "").arg(grouped).arg(fractionPart);
+    return formatCurrencyAmount(value, "EUR", UserPreferences());
 }
 
 QString formatDistanceKilometres(double value, const QString& unit)
 {
-    if (!std::isfinite(value))
-    {
-        return unavailable;
-    }
-    const QString normalizedUnit = unit.trimmed().toLower();
-    double kilometres = value;
-    if (normalizedUnit == "m" || normalizedUnit == "meters" || normalizedUnit == "metres")
-    {
-        kilometres = value / 1000.0;
-    }
-    return QString("%1 KM").arg(formatDisplayNumber(kilometres, 2));
+    return formatDistance(value, unit, UserPreferences());
 }
 
 QString formatProgressPercent(double plannedDistance, double remainingDistance)
@@ -193,11 +157,17 @@ QString formatFuelRemainingPercent(double fuelAmount, double fuelCapacity)
 
 QString formatFuelDisplay(double fuelAmount, double fuelCapacity)
 {
+    return formatFuelDisplay(fuelAmount, fuelCapacity, UserPreferences());
+}
+
+QString formatFuelDisplay(double fuelAmount, double fuelCapacity,
+                          const UserPreferences& preferences)
+{
     const QString amount = std::isfinite(fuelAmount) && fuelAmount >= 0.0
-        ? QString("%1 L").arg(formatDisplayNumber(fuelAmount, 2))
+        ? formatVolume(fuelAmount, preferences)
         : unavailable;
     const QString capacity = std::isfinite(fuelCapacity) && fuelCapacity > 0.0
-        ? QString("%1 L").arg(formatDisplayNumber(fuelCapacity, 2))
+        ? formatVolume(fuelCapacity, preferences)
         : unavailable;
     return QString("%1 / %2 (%3)")
         .arg(amount, capacity, formatFuelRemainingPercent(fuelAmount, fuelCapacity));
@@ -231,18 +201,18 @@ QString formatNormalizedPercent(const QString& rawValue, const QString& unit)
 
 QString formatCruiseKmH(const QString& rawValue, const QString& unit)
 {
+    return formatCruiseSpeed(rawValue, unit, UserPreferences());
+}
+
+QString formatCruiseSpeed(const QString& rawValue, const QString& unit,
+                          const UserPreferences& preferences)
+{
     double value = 0.0;
     if (!parseDoubleValue(rawValue, value))
     {
         return unavailable;
     }
-    const QString normalizedUnit = unit.trimmed().toLower();
-    double kmh = value;
-    if (normalizedUnit == "m/s" || normalizedUnit == "mps" || normalizedUnit == "metres per second" || normalizedUnit == "meters per second")
-    {
-        kmh = value * 3.6;
-    }
-    return QString("%1 KM/H").arg(formatDisplayNumber(kmh, 2));
+    return formatSpeed(value, unit, preferences);
 }
 
 } // namespace nlsi

@@ -2,20 +2,20 @@
 
 NLSI Exclusive Logbook is a native Windows desktop telemetry dashboard for **Euro Truck Simulator 2 (ETS2)** and **American Truck Simulator (ATS)**. The application is developed in C++17 with Qt Widgets and interfaces with the official SCS Telemetry SDK (version 1.15) to display real-time vehicle, driving, navigation, and job metrics.
 
-> **Project Status:** Beta / Active Development (current release: `v1.7.3 Beta`). Features, telemetry mappings, and live gameplay behavior may evolve between releases. Unverified gameplay scenarios or unconfirmed SDK channels are never assumed or fabricated.
+> **Project Status:** Beta / Active Development (current release: `v1.7.4 Beta`). Features, telemetry mappings, and live gameplay behavior may evolve between releases. Unverified gameplay scenarios or unconfirmed SDK channels are never assumed or fabricated.
 
 ---
 
 ## Install or Update
 
-For v1.7.3, install over the existing version without uninstalling; the
+For v1.7.4, install over the existing version without uninstalling; the
 installer updates the application and automatically replaces eligible
 NLSI-managed plugin DLLs. See the
-[current installation guide](docs/INSTALLATION-v1.7.3-beta.md).
+[current installation guide](docs/INSTALLATION-v1.7.4-beta.md).
 
 1. **Back up records you want to keep.** Copy any important logs, job/session history, exports, and configuration from the existing installation or its user-data directory. The usual per-user data location is `%LOCALAPPDATA%\NLSI\Exclusive Logbook`; verify what your installed build actually uses before removing anything.
 2. **Close the application and games.** Exit NLSI Exclusive Logbook. Close ETS2 and ATS completely and check Task Manager for any remaining application/game processes.
-3. **Update in place.** Run the v1.7.3 installer over the existing application. Manual uninstall is not required.
+3. **Update in place.** Run the v1.7.4 installer over the existing application. Manual uninstall is not required.
 4. **Close games before setup.** If a game DLL is locked, close the game or other process using it and retry. Do not manually delete unrelated game files or third-party telemetry plugins.
 5. **Install the update.** Grant administrator permission if Windows requests it for protected application or game plugin folders.
 6. **Verify plugin deployment.** The installer automatically deploys the matching x64/x86 DLLs to detected game directories. Only unchanged NLSI-managed plugin files are replaced.
@@ -138,7 +138,7 @@ cmake --build build-x86 --config Release
 
 ## Installation & Deployment
 
-1. Download the v1.7.3 Beta installer (`NLSI-Exclusive-Logbook-v1.7.3-beta-Setup.exe`) from the [GitHub Releases](https://github.com/Christian-0777/nlsi_telemetry/releases) page.
+1. Download the v1.7.4 Beta installer (`NLSI-Exclusive-Logbook-v1.7.4-beta-Setup.exe`) from the [GitHub Releases](https://github.com/Christian-0777/nlsi_telemetry/releases) page.
 2. Run the installer and select your installation directory (defaults to `C:\Program Files\Nabski Logistics Solutions Inc`).
 3. The installer scans known Steam library configurations (`libraryfolders.vdf`) to detect ETS2 and ATS installations.
 4. The installer automatically deploys `nlsi_scs_plugin.dll` to detected architecture-specific `bin\win_x64\plugins` and `bin\win_x86\plugins` game folders.

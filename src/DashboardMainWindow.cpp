@@ -1,6 +1,8 @@
 #include "DashboardMainWindow.h"
 #include "DisplayFormatting.h"
 #include "DashboardTypography.h"
+#include "JobReport.h"
+#include "MeasurementFormatting.h"
 
 #include <cmath>
 #include <limits>
@@ -9,9 +11,12 @@
 #include <QDateTime>
 #include <QDialog>
 #include <QDir>
+#include <QComboBox>
 #include <QFileInfo>
+#include <QFileDialog>
 #include <QFutureWatcher>
 #include <QFrame>
+#include <QFormLayout>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -23,6 +28,7 @@
 #include <QMetaObject>
 #include <QPixmap>
 #include <QPushButton>
+#include <QMessageBox>
 #include <QSizePolicy>
 #include <QScrollArea>
 #include <QStackedWidget>
@@ -139,7 +145,8 @@ QString recordText(const JobRecord& record, const std::string& key)
     return uppercaseDisplayText(value);
 }
 
-QString recordNumber(const JobRecord& record, const std::string& key, const QString& unit = QString())
+QString recordNumber(const JobRecord& record, const std::string& key,
+                     const UserPreferences& preferences, const QString& unit = QString())
 {
     const auto it = record.snapshot.values.find(key);
     if (it == record.snapshot.values.end() || !it->second.available)
@@ -151,11 +158,25 @@ QString recordNumber(const JobRecord& record, const std::string& key, const QStr
     {
         return unavailable;
     }
-    const QString suffix = unit.isEmpty() ? QString::fromStdString(it->second.unit) : unit;
+    const QString sourceUnit = QString::fromStdString(it->second.unit);
+    if (key == "job.max_speed_kmh" || key == "job.average_speed_kmh")
+    {
+        return formatSpeed(value, sourceUnit, preferences);
+    }
+    if (key == "job.refueled" || key == "job.total_fuel_consumed")
+    {
+        return formatVolume(value, preferences);
+    }
+    if (key == "job.cancel_penalty")
+    {
+        return formatCurrencyAmount(value, sourceUnit, preferences);
+    }
+    const QString suffix = unit.isEmpty() ? sourceUnit : unit;
     return formatFixedNumber(QString::number(value, 'g', 16), suffix, 2);
 }
 
-QString recordDistance(const JobRecord& record, const std::string& key)
+QString recordDistance(const JobRecord& record, const std::string& key,
+                       const UserPreferences& preferences)
 {
     const auto it = record.snapshot.values.find(key);
     if (it == record.snapshot.values.end() || !it->second.available)
@@ -167,15 +188,16 @@ QString recordDistance(const JobRecord& record, const std::string& key)
     {
         return unavailable;
     }
-    return formatDistanceKilometres(value, QString::fromStdString(it->second.unit));
+    return formatDistance(value, QString::fromStdString(it->second.unit), preferences);
 }
 
-QString recordCurrency(const JobRecord& record)
+QString recordCurrency(const JobRecord& record, const UserPreferences& preferences)
 {
     double value = 0.0;
-    const QString raw = recordValue(record, "job.income");
-    return raw != unavailable && parseDoubleValue(raw, value)
-        ? formatCurrencyEuro(value)
+    const auto it = record.snapshot.values.find("job.income");
+    return it != record.snapshot.values.end() && it->second.available &&
+            parseDoubleValue(QString::fromStdString(it->second.value), value)
+        ? formatCurrencyAmount(value, QString::fromStdString(it->second.unit), preferences)
         : unavailable;
 }
 
@@ -239,7 +261,7 @@ QString currentJobCompanyCity(const TelemetrySnapshot& snapshot,
     return QString("%1 - %2").arg(company, city);
 }
 
-QString recordAverageFuelConsumption(const JobRecord& record)
+QString recordAverageFuelConsumption(const JobRecord& record, const UserPreferences& preferences)
 {
     const QString raw = recordValue(record, "truck.fuel.average_consumption");
     double value = 0.0;
@@ -253,7 +275,24 @@ QString recordAverageFuelConsumption(const JobRecord& record)
     {
         value *= 100.0;
     }
-    return QString("%1 L/100 KM").arg(formatDisplayNumber(value, 2));
+    if (preferences.volume == VolumeUnit::UsGallons)
+    {
+        value = litersToUsGallons(value *
+            (preferences.distance == DistanceUnit::Miles ? milesToKilometres(1.0) : 1.0));
+    }
+    else if (preferences.volume == VolumeUnit::ImperialGallons)
+    {
+        value = litersToImperialGallons(value *
+            (preferences.distance == DistanceUnit::Miles ? milesToKilometres(1.0) : 1.0));
+    }
+    else if (preferences.distance == DistanceUnit::Miles)
+    {
+        value *= milesToKilometres(1.0);
+    }
+    return QString("%1 %2/100 %3")
+        .arg(formatDisplayNumber(value, 2),
+             volumeUnitLabel(preferences.volume),
+             distanceUnitLabel(preferences.distance));
 }
 
 QString recordSpecialCargo(const JobRecord& record)
@@ -331,11 +370,15 @@ bool snapshotMatchesProcess(const TelemetrySnapshot& snapshot, GameProcessState 
 
 namespace nlsi {
 
-DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHistoryDirectory)
+DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHistoryDirectory,
+                                         const QString& profileFilePath)
     : QMainWindow(parent),
-      jobHistory_(jobHistoryDirectory)
+      jobHistory_(jobHistoryDirectory),
+      profileStore_(profileFilePath)
 {
-    setWindowTitle("NLSI Exclusive Logbook 1.7.3 Beta");
+    QString profileError;
+    const bool profileLoaded = profileStore_.load(preferences_, &profileError);
+    setWindowTitle("NLSI Exclusive Logbook 1.7.4 Beta");
     const QString iconPath = QFileInfo(QDir::currentPath(), "resources/nlsi.ico").exists()
         ? QDir::currentPath() + "/resources/nlsi.ico"
         : QCoreApplication::applicationDirPath() + "/resources/nlsi.ico";
@@ -358,6 +401,10 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
         "QPushButton[sidebarNavButton=\"true\"][active=\"true\"] { font-weight: 700; color: #FFFFFF; background: #D94F8C; border: 1px solid #C83E7B; border-left: 4px solid #9F285D; }"
         "QPushButton[sidebarNavButton=\"true\"][active=\"true\"]:hover { color: #FFFFFF; background: #C83E7B; border-color: #B8306D; }"
         "QPushButton[sidebarNavButton=\"true\"][active=\"true\"]:pressed { color: #FFFFFF; background: #A92E67; border-color: #922357; }"
+        "QPushButton[settingsTab=\"true\"] { font: 700 12px 'Segoe UI'; color: #665B62; background: #FFF8FB; border: 1px solid #FFD1E6; border-radius: 5px; padding: 8px 16px; }"
+        "QPushButton[settingsTab=\"true\"][active=\"true\"] { color: #FFFFFF; background: #D94F8C; border-color: #C83E7B; }"
+        "QPushButton#savePreferencesButton { font: 700 12px 'Segoe UI'; color: #FFFFFF; background: #D94F8C; border: 1px solid #C83E7B; border-radius: 5px; padding: 9px 16px; }"
+        "QPushButton#savePreferencesButton:hover { background: #C83E7B; }"
         "QPushButton#completedJobCard { text-align: left; background: #FFFFFF; border: 1px solid #FFD1E6; border-radius: 5px; padding: 10px; }"
         "QPushButton#completedJobCard QLabel { font-weight: 700; }"
         "QPushButton#completedJobCard:hover { background: #FFF7FA; }"
@@ -407,11 +454,15 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
     statusBar->setStyleSheet(
         "QStatusBar { background: #FFF7FA; border-top: 1px solid #FFD1E6; color: #665B62; font: 700 10px 'Segoe UI'; padding: 0 8px; }"
     );
-    statusBar->showMessage("READ-ONLY LOCAL TELEMETRY • VERSION 1.7.3 BETA");
+    statusBar->showMessage("READ-ONLY LOCAL TELEMETRY • VERSION 1.7.4 BETA");
     setStatusBar(statusBar);
     if (!jobHistory_.errorString().isEmpty())
     {
         statusBar->showMessage(uppercaseDisplayText("JOB HISTORY WARNING: " + jobHistory_.errorString()));
+    }
+    if (!profileLoaded)
+    {
+        statusBar->showMessage(uppercaseDisplayText("PREFERENCES WARNING: " + profileError));
     }
     refreshCompletedJobs();
 
@@ -506,13 +557,21 @@ void DashboardMainWindow::buildSidebar()
     completedJobsNavButton_->setFixedHeight(38);
     connect(completedJobsNavButton_, &QPushButton::clicked, this, &DashboardMainWindow::showCompletedJobs);
     layout->addWidget(completedJobsNavButton_);
+    settingsNavButton_ = new QPushButton("SETTINGS", sidebar_);
+    settingsNavButton_->setObjectName("settingsNavButton");
+    settingsNavButton_->setProperty("sidebarNavButton", true);
+    settingsNavButton_->setProperty("active", false);
+    settingsNavButton_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    settingsNavButton_->setFixedHeight(38);
+    connect(settingsNavButton_, &QPushButton::clicked, this, &DashboardMainWindow::showSettings);
+    layout->addWidget(settingsNavButton_);
     layout->addStretch();
     auto* footerDivider = new QFrame(sidebar_);
     footerDivider->setFrameShape(QFrame::HLine);
     footerDivider->setFrameShadow(QFrame::Plain);
     footerDivider->setStyleSheet("QFrame { color: #FFD1E6; background: #FFD1E6; max-height: 1px; }");
     layout->addWidget(footerDivider);
-    auto* version = new QLabel("1.7.3 BETA", sidebar_);
+    auto* version = new QLabel("1.7.4 BETA", sidebar_);
     version->setObjectName("sidebarSubtitle");
     layout->addWidget(version);
 }
@@ -600,12 +659,15 @@ void DashboardMainWindow::buildContent()
     statusValue_->setObjectName("statusValue");
     cargoValue_ = addField(jobGrid, job, "CARGO", 1, 0);
     incomeValue_ = addField(jobGrid, job, "INCOME", 1, 2);
+    incomeValue_->setObjectName("incomeValue");
     fromValue_ = addField(jobGrid, job, "FROM", 2, 0);
     fromValue_->setObjectName("fromValue");
     toValue_ = addField(jobGrid, job, "TO", 2, 2);
     toValue_->setObjectName("toValue");
     plannedDistanceValue_ = addField(jobGrid, job, "PLANNED DISTANCE", 3, 0);
+    plannedDistanceValue_->setObjectName("plannedDistanceValue");
     remainingDistanceValue_ = addField(jobGrid, job, "REMAINING DISTANCE", 3, 2);
+    remainingDistanceValue_->setObjectName("remainingDistanceValue");
     auto* progressCell = new QWidget(job);
     auto* progressCellLayout = new QVBoxLayout(progressCell);
     progressCellLayout->setContentsMargins(0, 0, 0, 0);
@@ -696,6 +758,120 @@ void DashboardMainWindow::buildContent()
     completedScroll->setWidget(completedContent);
     completedPageLayout->addWidget(completedScroll);
     pageStack_->addWidget(completedPage);
+
+    auto* settingsPage = new QWidget(pageStack_);
+    auto* settingsLayout = new QVBoxLayout(settingsPage);
+    settingsLayout->setContentsMargins(0, 0, 0, 0);
+    settingsLayout->setSpacing(8);
+    auto* tabRow = new QHBoxLayout();
+    tabRow->setSpacing(6);
+    preferenceTabButton_ = new QPushButton("PREFERENCE", settingsPage);
+    preferenceTabButton_->setObjectName("preferenceTabButton");
+    preferenceTabButton_->setProperty("settingsTab", true);
+    preferenceTabButton_->setProperty("active", true);
+    profileTabButton_ = new QPushButton("PROFILE", settingsPage);
+    profileTabButton_->setObjectName("profileTabButton");
+    profileTabButton_->setProperty("settingsTab", true);
+    profileTabButton_->setProperty("active", false);
+    tabRow->addWidget(preferenceTabButton_);
+    tabRow->addWidget(profileTabButton_);
+    tabRow->addStretch();
+    settingsLayout->addLayout(tabRow);
+
+    settingsTabs_ = new QStackedWidget(settingsPage);
+    settingsTabs_->setObjectName("settingsTabs");
+    auto* preferencePage = new QWidget(settingsTabs_);
+    auto* preferencePageLayout = new QVBoxLayout(preferencePage);
+    preferencePageLayout->setContentsMargins(0, 0, 0, 0);
+    auto* preferencePanel = new QGroupBox("MEASUREMENT PREFERENCES", preferencePage);
+    auto* preferenceForm = new QFormLayout(preferencePanel);
+    preferenceForm->setContentsMargins(14, 16, 14, 12);
+    preferenceForm->setHorizontalSpacing(18);
+    preferenceForm->setVerticalSpacing(12);
+
+    auto makePreference = [&](const QString& label, const QString& name)
+    {
+        auto* combo = new QComboBox(preferencePanel);
+        combo->setObjectName(name);
+        combo->setMinimumWidth(220);
+        auto* formLabel = new QLabel(label, preferencePanel);
+        formLabel->setObjectName("telemetryLabel");
+        preferenceForm->addRow(formLabel, combo);
+        return combo;
+    };
+    speedPreference_ = makePreference("SPEED", "speedPreference");
+    speedPreference_->addItem("Kilometers per hour (km/h)",
+                              static_cast<int>(SpeedUnit::KilometresPerHour));
+    speedPreference_->addItem("Miles per hour (mph)",
+                              static_cast<int>(SpeedUnit::MilesPerHour));
+    volumePreference_ = makePreference("VOLUME", "volumePreference");
+    volumePreference_->addItem("Liters (L)", static_cast<int>(VolumeUnit::Liters));
+    volumePreference_->addItem("US gallons (US gal)", static_cast<int>(VolumeUnit::UsGallons));
+    volumePreference_->addItem("Imperial gallons (Imp gal)",
+                               static_cast<int>(VolumeUnit::ImperialGallons));
+    currencyPreference_ = makePreference("CURRENCY", "currencyPreference");
+    currencyPreference_->addItem("EUR (€)", static_cast<int>(CurrencyUnit::Euro));
+    currencyPreference_->addItem("USD ($)", static_cast<int>(CurrencyUnit::UsDollar));
+    distancePreference_ = makePreference("DISTANCE", "distancePreference");
+    distancePreference_->addItem("Kilometers (km)", static_cast<int>(DistanceUnit::Kilometres));
+    distancePreference_->addItem("Miles (mi)", static_cast<int>(DistanceUnit::Miles));
+
+    auto* preferenceActions = new QHBoxLayout();
+    preferenceActions->addStretch();
+    savePreferencesButton_ = new QPushButton("SAVE PREFERENCES", preferencePage);
+    savePreferencesButton_->setObjectName("savePreferencesButton");
+    preferenceActions->addWidget(savePreferencesButton_);
+    preferencePageLayout->addWidget(preferencePanel);
+    preferencePageLayout->addLayout(preferenceActions);
+    preferencePageLayout->addStretch();
+    settingsTabs_->addWidget(preferencePage);
+
+    auto* profilePage = new QWidget(settingsTabs_);
+    auto* profileLayout = new QVBoxLayout(profilePage);
+    profileLayout->setContentsMargins(0, 0, 0, 0);
+    auto* profilePanel = new QGroupBox("PROFILE", profilePage);
+    auto* profilePanelLayout = new QVBoxLayout(profilePanel);
+    profilePanelLayout->setContentsMargins(18, 24, 18, 24);
+    profilePanelLayout->setAlignment(Qt::AlignCenter);
+    auto* comingSoon = new QLabel("COMING SOON", profilePanel);
+    comingSoon->setObjectName("profileComingSoon");
+    comingSoon->setAlignment(Qt::AlignCenter);
+    comingSoon->setStyleSheet("font: 700 20px 'Segoe UI'; color: #A15E7D;");
+    auto* profileDescription = new QLabel(
+        "Profile management will be available in a future release.", profilePanel);
+    profileDescription->setObjectName("profileComingSoonDescription");
+    profileDescription->setAlignment(Qt::AlignCenter);
+    profileDescription->setStyleSheet("color: #665B62; padding-top: 6px;");
+    profilePanelLayout->addWidget(comingSoon);
+    profilePanelLayout->addWidget(profileDescription);
+    profileLayout->addWidget(profilePanel);
+    profileLayout->addStretch();
+    settingsTabs_->addWidget(profilePage);
+    settingsLayout->addWidget(settingsTabs_, 1);
+    pageStack_->addWidget(settingsPage);
+
+    connect(preferenceTabButton_, &QPushButton::clicked, this, [this]()
+    {
+        settingsTabs_->setCurrentIndex(0);
+        preferenceTabButton_->setProperty("active", true);
+        profileTabButton_->setProperty("active", false);
+        preferenceTabButton_->style()->unpolish(preferenceTabButton_);
+        preferenceTabButton_->style()->polish(preferenceTabButton_);
+        profileTabButton_->style()->unpolish(profileTabButton_);
+        profileTabButton_->style()->polish(profileTabButton_);
+    });
+    connect(profileTabButton_, &QPushButton::clicked, this, [this]()
+    {
+        settingsTabs_->setCurrentIndex(1);
+        preferenceTabButton_->setProperty("active", false);
+        profileTabButton_->setProperty("active", true);
+        preferenceTabButton_->style()->unpolish(preferenceTabButton_);
+        preferenceTabButton_->style()->polish(preferenceTabButton_);
+        profileTabButton_->style()->unpolish(profileTabButton_);
+        profileTabButton_->style()->polish(profileTabButton_);
+    });
+    connect(savePreferencesButton_, &QPushButton::clicked,
+            this, &DashboardMainWindow::savePreferences);
     rootLayout->addWidget(pageStack_, 1);
 }
 
@@ -703,25 +879,66 @@ void DashboardMainWindow::showDashboard()
 {
     pageStack_->setCurrentIndex(0);
     headerTitle_->setText("DASHBOARD");
-    dashboardNavButton_->setProperty("active", true);
-    completedJobsNavButton_->setProperty("active", false);
-    dashboardNavButton_->style()->unpolish(dashboardNavButton_);
-    dashboardNavButton_->style()->polish(dashboardNavButton_);
-    completedJobsNavButton_->style()->unpolish(completedJobsNavButton_);
-    completedJobsNavButton_->style()->polish(completedJobsNavButton_);
+    updateNavigationState(dashboardNavButton_);
 }
 
 void DashboardMainWindow::showCompletedJobs()
 {
     pageStack_->setCurrentIndex(1);
     headerTitle_->setText("COMPLETED JOBS");
-    dashboardNavButton_->setProperty("active", false);
-    completedJobsNavButton_->setProperty("active", true);
-    dashboardNavButton_->style()->unpolish(dashboardNavButton_);
-    dashboardNavButton_->style()->polish(dashboardNavButton_);
-    completedJobsNavButton_->style()->unpolish(completedJobsNavButton_);
-    completedJobsNavButton_->style()->polish(completedJobsNavButton_);
+    updateNavigationState(completedJobsNavButton_);
     refreshCompletedJobs();
+}
+
+void DashboardMainWindow::showSettings()
+{
+    pageStack_->setCurrentIndex(2);
+    headerTitle_->setText("SETTINGS");
+    updateNavigationState(settingsNavButton_);
+    speedPreference_->setCurrentIndex(speedPreference_->findData(static_cast<int>(preferences_.speed)));
+    volumePreference_->setCurrentIndex(volumePreference_->findData(static_cast<int>(preferences_.volume)));
+    currencyPreference_->setCurrentIndex(currencyPreference_->findData(static_cast<int>(preferences_.currency)));
+    distancePreference_->setCurrentIndex(distancePreference_->findData(static_cast<int>(preferences_.distance)));
+}
+
+void DashboardMainWindow::updateNavigationState(QPushButton* activeButton)
+{
+    const QList<QPushButton*> buttons = {
+        dashboardNavButton_, completedJobsNavButton_, settingsNavButton_
+    };
+    for (QPushButton* button : buttons)
+    {
+        if (!button)
+        {
+            continue;
+        }
+        button->setProperty("active", button == activeButton);
+        button->style()->unpolish(button);
+        button->style()->polish(button);
+    }
+}
+
+void DashboardMainWindow::savePreferences()
+{
+    UserPreferences pending;
+    pending.speed = static_cast<SpeedUnit>(speedPreference_->currentData().toInt());
+    pending.volume = static_cast<VolumeUnit>(volumePreference_->currentData().toInt());
+    pending.currency = static_cast<CurrencyUnit>(currencyPreference_->currentData().toInt());
+    pending.distance = static_cast<DistanceUnit>(distancePreference_->currentData().toInt());
+
+    QString error;
+    if (!isValidPreferences(pending) || !profileStore_.save(pending, &error))
+    {
+        const QString message = error.isEmpty()
+            ? "Preferences contain an unsupported setting value."
+            : error;
+        statusBar()->showMessage(uppercaseDisplayText("PREFERENCES ERROR: " + message));
+        return;
+    }
+    preferences_ = pending;
+    refreshDisplayedSnapshot();
+    refreshCompletedJobs();
+    statusBar()->showMessage("PREFERENCES SAVED.");
 }
 
 void DashboardMainWindow::refreshCompletedJobs()
@@ -795,7 +1012,7 @@ void DashboardMainWindow::refreshCompletedJobs()
         route->setWordWrap(true);
         cardLayout->addWidget(route);
         auto* footer = new QLabel(
-            "INCOME  " + recordCurrency(record) + "     COMPLETED  " +
+            "INCOME  " + recordCurrency(record, preferences_) + "     COMPLETED  " +
                 (record.completedAt.isValid()
                     ? record.completedAt.toLocalTime().toString("yyyy-MM-dd  hh:mm")
                     : unavailable),
@@ -830,8 +1047,25 @@ void DashboardMainWindow::showJobDetails(const JobRecord& record)
     sections->setContentsMargins(3, 3, 3, 3);
     sections->setSpacing(8);
 
+    QString reportHtml =
+        "<html><head><style>"
+        "body{font-family:'Segoe UI',sans-serif;color:#28232A;}"
+        "h1{color:#D94F8C;font-size:18pt;}h2{font-size:12pt;margin-top:16px;}"
+        "table{width:100%;border-collapse:collapse;}td{padding:5px;border-bottom:1px solid #FFD1E6;}"
+        "td:first-child{font-weight:bold;color:#A15E7D;width:38%;}"
+        "</style></head><body><h1>NLSI EXCLUSIVE LOGBOOK</h1><p>" +
+        QString::fromStdString(record.id).toHtmlEscaped() + " — " +
+        QString::fromStdString(jobStatusToString(record.status)).toHtmlEscaped() +
+        "</p>";
     const auto addSection = [&](const QString& title, const std::vector<std::pair<QString, QString>>& fields)
     {
+        reportHtml += "<h2>" + title.toHtmlEscaped() + "</h2><table>";
+        for (const auto& field : fields)
+        {
+            reportHtml += "<tr><td>" + field.first.toHtmlEscaped() + "</td><td>" +
+                field.second.toHtmlEscaped() + "</td></tr>";
+        }
+        reportHtml += "</table>";
         auto* group = new QGroupBox(title, content);
         auto* grid = new QGridLayout(group);
         grid->setContentsMargins(9, 13, 9, 8);
@@ -862,14 +1096,14 @@ void DashboardMainWindow::showJobDetails(const JobRecord& record)
 
     addSection("JOB DETAILS", {
         {"CARGO", recordText(record, "job.cargo")},
-        {"INCOME (EUR)", recordCurrency(record)},
+        {"INCOME", recordCurrency(record, preferences_)},
         {"FROM: CITY, COUNTRY", recordLocation(record, "job.source_city", "job.source_country")},
         {"TO: CITY, COUNTRY", recordLocation(record, "job.destination_city", "job.destination_country")},
         {"FROM: COMPANY", recordText(record, "job.source_company")},
         {"TO: COMPANY", recordText(record, "job.destination_company")},
-        {"PLANNED DISTANCE", recordDistance(record, "job.planned_distance_km")},
-        {"DRIVEN DISTANCE", recordDistance(record, "job.driven_distance_km")},
-        {"XP", recordNumber(record, "job.earned_xp", "XP")},
+        {"PLANNED DISTANCE", recordDistance(record, "job.planned_distance_km", preferences_)},
+        {"DRIVEN DISTANCE", recordDistance(record, "job.driven_distance_km", preferences_)},
+        {"XP", recordNumber(record, "job.earned_xp", preferences_, "XP")},
         {"DAMAGE", recordDamage(record)},
         {"TIME TAKEN (REAL)", recordDuration(record, "job.real_duration_seconds")},
         {"TIME TAKEN (IN-GAME)", recordDuration(record, "job.ingame_duration_minutes", 60.0)}
@@ -880,21 +1114,42 @@ void DashboardMainWindow::showJobDetails(const JobRecord& record)
         {"TRAILER", recordText(record, "trailer.details")},
         {"TRAILER PLATE", recordText(record, "trailer.license_plate")},
         {"FUEL COST", unavailable},
-        {"REFUELED", recordNumber(record, "job.refueled", "L")},
-        {"AVERAGE FUEL CONSUMPTION", recordAverageFuelConsumption(record)},
-        {"TOTAL FUEL CONSUMED", recordNumber(record, "job.total_fuel_consumed", "L")},
-        {"MAX SPEED", recordNumber(record, "job.max_speed_kmh", "KM/H")},
-        {"AVERAGE SPEED", recordNumber(record, "job.average_speed_kmh", "KM/H")}
+        {"REFUELED", recordNumber(record, "job.refueled", preferences_)},
+        {"AVERAGE FUEL CONSUMPTION", recordAverageFuelConsumption(record, preferences_)},
+        {"TOTAL FUEL CONSUMED", recordNumber(record, "job.total_fuel_consumed", preferences_)},
+        {"MAX SPEED", recordNumber(record, "job.max_speed_kmh", preferences_)},
+        {"AVERAGE SPEED", recordNumber(record, "job.average_speed_kmh", preferences_)}
     });
     const QString specialCargo = recordSpecialCargo(record);
     const QString status = QString::fromStdString(jobStatusToString(record.status));
     addSection("SPECIAL CARGO SUPPORT / STATUS", {
         {"SPECIAL CARGO", specialCargo},
         {"JOB STATUS", status},
-        {"CANCELLATION PENALTY", recordNumber(record, "job.cancel_penalty", "EUR")}
+        {"CANCELLATION PENALTY", recordNumber(record, "job.cancel_penalty", preferences_)}
     });
+    reportHtml += "</body></html>";
     scroll->setWidget(content);
     dialogLayout->addWidget(scroll);
+    auto* exportButton = new QPushButton("EXPORT PDF", &dialog);
+    exportButton->setObjectName("exportJobPdfButton");
+    exportButton->setCursor(Qt::PointingHandCursor);
+    connect(exportButton, &QPushButton::clicked, &dialog, [this, &dialog, reportHtml]()
+    {
+        const QString filePath = QFileDialog::getSaveFileName(
+            &dialog, "Export completed job", "completed-job.pdf", "PDF files (*.pdf)");
+        if (filePath.isEmpty())
+        {
+            return;
+        }
+        QString error;
+        if (!writePdfReport(filePath, reportHtml, &error))
+        {
+            QMessageBox::critical(&dialog, "PDF export failed", error);
+            return;
+        }
+        statusBar()->showMessage("COMPLETED JOB PDF EXPORTED.");
+    });
+    dialogLayout->addWidget(exportButton, 0, Qt::AlignRight);
     dialog.exec();
 }
 
@@ -1209,7 +1464,8 @@ void DashboardMainWindow::applySnapshot(const TelemetrySnapshot& snapshot)
             double value = 0.0;
             if (parseDoubleValue(QString::fromStdString(incomeField->value), value))
             {
-                set(incomeValue_, formatCurrencyEuro(value));
+                set(incomeValue_, formatCurrencyAmount(
+                    value, QString::fromStdString(incomeField->unit), preferences_));
             }
             else
             {
@@ -1242,7 +1498,7 @@ void DashboardMainWindow::applySnapshot(const TelemetrySnapshot& snapshot)
         if (plannedOk)
         {
             const QString plannedUnit = QString::fromStdString(planned->unit).trimmed();
-            set(plannedDistanceValue_, formatDistanceKilometres(plannedValue, plannedUnit));
+            set(plannedDistanceValue_, formatDistance(plannedValue, plannedUnit, preferences_));
         }
         else
         {
@@ -1251,7 +1507,7 @@ void DashboardMainWindow::applySnapshot(const TelemetrySnapshot& snapshot)
         if (remainingOk)
         {
             const QString remainingUnit = QString::fromStdString(remaining->unit).trimmed();
-            set(remainingDistanceValue_, formatDistanceKilometres(remainingValue, remainingUnit));
+            set(remainingDistanceValue_, formatDistance(remainingValue, remainingUnit, preferences_));
         }
         else
         {
@@ -1265,11 +1521,11 @@ void DashboardMainWindow::applySnapshot(const TelemetrySnapshot& snapshot)
             const QString remainingUnit = QString::fromStdString(remaining->unit).trimmed().toLower();
             if (plannedUnit == "m" || plannedUnit == "meters" || plannedUnit == "metres")
             {
-                plannedKm = plannedValue / 1000.0;
+                plannedKm = metresToKilometres(plannedValue);
             }
             if (remainingUnit == "m" || remainingUnit == "meters" || remainingUnit == "metres")
             {
-                remainingKm = remainingValue / 1000.0;
+                remainingKm = metresToKilometres(remainingValue);
             }
             const QString progressText = formatProgressPercent(plannedKm, remainingKm);
             const QString progressValue = progressText == unavailable ? unavailable : progressText;
@@ -1303,8 +1559,10 @@ void DashboardMainWindow::applySnapshot(const TelemetrySnapshot& snapshot)
         double fuelCapacity = std::numeric_limits<double>::quiet_NaN();
         const bool fuelAvailable = fuel.first != unavailable && parseDoubleValue(fuel.first, fuelAmount);
         const bool capacityAvailable = capacity.first != unavailable && parseDoubleValue(capacity.first, fuelCapacity);
-        set(fuelValue_, formatFuelDisplay(fuelAvailable ? fuelAmount : std::numeric_limits<double>::quiet_NaN(),
-            capacityAvailable ? fuelCapacity : std::numeric_limits<double>::quiet_NaN()));
+        set(fuelValue_, formatFuelDisplay(
+            fuelAvailable ? fuelAmount : std::numeric_limits<double>::quiet_NaN(),
+            capacityAvailable ? fuelCapacity : std::numeric_limits<double>::quiet_NaN(),
+            preferences_));
         fuelValue_->setStyleSheet(fuelAvailable && capacityAvailable &&
             isFuelAtOrBelowWarningThreshold(fuelAmount, fuelCapacity)
                 ? "color: #C62828;"
@@ -1352,7 +1610,7 @@ void DashboardMainWindow::applySnapshot(const TelemetrySnapshot& snapshot)
         }
         else
         {
-            const QString speed = formatCruiseKmH(cruise.first, cruise.second);
+            const QString speed = formatCruiseSpeed(cruise.first, cruise.second, preferences_);
             set(cruiseValue_, speed == unavailable
                 ? unavailable
                 : cruiseSpeed > 0.0 ? speed + " - A" : speed);

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(nlsi_exclusive_logbook VERSION 1.7.3 LANGUAGES CXX)
+project(nlsi_exclusive_logbook VERSION 1.7.4 LANGUAGES CXX)
 
 if(WIN32)
     enable_language(RC)
@@ -40,8 +40,10 @@ if(BUILD_DASHBOARD OR BUILD_TESTING)
 
     if(QT_VERSION_MAJOR EQUAL 6)
         set(QT_LIBS Qt6::Core Qt6::Widgets Qt6::Network Qt6::Concurrent)
+        set(QT_CORE_LIB Qt6::Core)
     else()
         set(QT_LIBS Qt5::Core Qt5::Widgets Qt5::Network Qt5::Concurrent)
+        set(QT_CORE_LIB Qt5::Core)
     endif()
 endif()
 
@@ -58,14 +60,32 @@ target_include_directories(nlsi_ipc
 target_compile_features(nlsi_ipc PUBLIC cxx_std_17)
 
 if(BUILD_DASHBOARD OR BUILD_TESTING)
+    add_library(nlsi_preferences STATIC
+        src/shared/UserPreferences.cpp
+        src/shared/UserPreferences.h
+    )
+    target_include_directories(nlsi_preferences
+        PUBLIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/shared
+    )
+    target_link_libraries(nlsi_preferences PUBLIC ${QT_CORE_LIB})
+    if(WIN32)
+        target_link_libraries(nlsi_preferences PRIVATE Crypt32)
+    endif()
+    target_compile_features(nlsi_preferences PUBLIC cxx_std_17)
+
     add_library(nlsi_display_formatting STATIC
         src/shared/DisplayFormatting.cpp
+        src/shared/MeasurementFormatting.cpp
+        src/shared/JobReport.cpp
+        src/shared/JobReport.h
+        src/shared/MeasurementFormatting.h
     )
     target_include_directories(nlsi_display_formatting
         PUBLIC
             ${CMAKE_CURRENT_SOURCE_DIR}/src/shared
     )
-    target_link_libraries(nlsi_display_formatting PUBLIC ${QT_LIBS})
+    target_link_libraries(nlsi_display_formatting PUBLIC ${QT_LIBS} nlsi_preferences)
     target_compile_features(nlsi_display_formatting PUBLIC cxx_std_17)
 endif()
 
@@ -162,6 +182,15 @@ if(BUILD_TESTING)
     target_compile_features(nlsi_job_history_tests PRIVATE cxx_std_17)
     target_link_libraries(nlsi_job_history_tests PRIVATE ${QT_LIBS} nlsi_ipc)
     add_test(NAME nlsi_job_history_tests COMMAND nlsi_job_history_tests)
+    add_executable(nlsi_preferences_tests
+        tests/preferences_tests.cpp
+    )
+    target_include_directories(nlsi_preferences_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/shared
+    )
+    target_compile_features(nlsi_preferences_tests PRIVATE cxx_std_17)
+    target_link_libraries(nlsi_preferences_tests PRIVATE ${QT_LIBS} nlsi_display_formatting)
+    add_test(NAME nlsi_preferences_tests COMMAND nlsi_preferences_tests)
     if(Qt6_FOUND)
         get_filename_component(_qt_bin_dir "${Qt6_DIR}/../../../bin" ABSOLUTE)
     elseif(Qt5_FOUND)
@@ -172,6 +201,9 @@ if(BUILD_TESTING)
             ENVIRONMENT "PATH=${_qt_bin_dir}"
         )
         set_tests_properties(nlsi_job_history_tests PROPERTIES
+            ENVIRONMENT "PATH=${_qt_bin_dir}"
+        )
+        set_tests_properties(nlsi_preferences_tests PROPERTIES
             ENVIRONMENT "PATH=${_qt_bin_dir}"
         )
     endif()

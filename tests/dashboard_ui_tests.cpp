@@ -3,7 +3,9 @@
 
 #include <QApplication>
 #include <QAbstractButton>
+#include <QComboBox>
 #include <QDialog>
+#include <QFile>
 #include <QGroupBox>
 #include <QLabel>
 #include <QProgressBar>
@@ -12,18 +14,27 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QStackedWidget>
+#include <QStatusBar>
 #include <QTemporaryDir>
 #include <QTimer>
 
 #include "DashboardMainWindow.h"
+#include "JobReport.h"
 
 int main(int argc, char** argv)
 {
     QApplication app(argc, argv);
-    nlsi::DashboardMainWindow window;
-    if (window.windowTitle() != "NLSI Exclusive Logbook 1.7.3 Beta")
+    QTemporaryDir dashboardProfileDirectory;
+    if (!dashboardProfileDirectory.isValid())
     {
-        std::cerr << "The dashboard window title does not report v1.7.3 Beta.\n";
+        std::cerr << "Could not create the temporary dashboard profile directory.\n";
+        return 1;
+    }
+    const QString dashboardProfilePath = dashboardProfileDirectory.filePath("profile.nlsi");
+    nlsi::DashboardMainWindow window(nullptr, QString(), dashboardProfilePath);
+    if (window.windowTitle() != "NLSI Exclusive Logbook 1.7.4 Beta")
+    {
+        std::cerr << "The dashboard window title does not report v1.7.4 Beta.\n";
         return 1;
     }
     if (window.minimumSize() != QSize(900, 600))
@@ -79,7 +90,9 @@ int main(int argc, char** argv)
     auto* sidebar = window.findChild<QWidget*>("sidebar");
     auto* dashboardItem = window.findChild<QAbstractButton*>("dashboardNavButton");
     auto* completedItem = window.findChild<QAbstractButton*>("completedJobsNavButton");
+    auto* settingsItem = window.findChild<QAbstractButton*>("settingsNavButton");
     auto* pageStack = window.findChild<QStackedWidget*>("mainPages");
+    auto* settingsTabs = window.findChild<QStackedWidget*>("settingsTabs");
     auto* dashboardScroll = window.findChild<QScrollArea*>("dashboardScroll");
     auto* brandName = window.findChild<QLabel*>("sidebarTitle");
     auto* brandSubtitle = window.findChild<QLabel*>("sidebarSubtitle");
@@ -87,10 +100,12 @@ int main(int argc, char** argv)
     auto* fieldLabel = window.findChild<QLabel*>("telemetryLabel");
     auto* fieldValue = window.findChild<QLabel*>("telemetryValue");
     auto* cardTitle = panels.at(0);
-    if (!sidebar || !dashboardItem || !completedItem || !pageStack || !dashboardScroll ||
+    if (!sidebar || !dashboardItem || !completedItem || !settingsItem || !pageStack ||
+        !settingsTabs || settingsTabs->count() != 2 || !dashboardScroll ||
         dashboardItem->sizePolicy().horizontalPolicy() != QSizePolicy::Expanding ||
         !dashboardItem->property("sidebarNavButton").toBool() ||
         !completedItem->property("sidebarNavButton").toBool() ||
+        !settingsItem->property("sidebarNavButton").toBool() ||
         !brandName || !brandSubtitle || brandSubtitle->wordWrap() ||
         !dashboardItem->property("active").toBool() ||
         completedItem->property("active").toBool() ||
@@ -126,6 +141,7 @@ int main(int argc, char** argv)
     }
     if (dashboardItem->width() != sidebar->width() - 24 ||
         completedItem->width() != sidebar->width() - 24 ||
+        settingsItem->width() != sidebar->width() - 24 ||
         brandName->font().pixelSize() != 16 || brandSubtitle->font().pixelSize() != 13 ||
         !headerTitle || headerTitle->font().pixelSize() != 15 ||
         !fieldLabel || fieldLabel->font().pixelSize() != 14 ||
@@ -264,14 +280,119 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    auto* settingsNavigation = window.findChild<QPushButton*>("settingsNavButton");
+    auto* preferenceTab = window.findChild<QPushButton*>("preferenceTabButton");
+    auto* profileTab = window.findChild<QPushButton*>("profileTabButton");
+    auto* speedPreference = window.findChild<QComboBox*>("speedPreference");
+    auto* volumePreference = window.findChild<QComboBox*>("volumePreference");
+    auto* currencyPreference = window.findChild<QComboBox*>("currencyPreference");
+    auto* distancePreference = window.findChild<QComboBox*>("distancePreference");
+    auto* savePreferences = window.findChild<QPushButton*>("savePreferencesButton");
+    if (!settingsNavigation || !preferenceTab || !profileTab || !speedPreference ||
+        !volumePreference || !currencyPreference || !distancePreference || !savePreferences)
+    {
+        std::cerr << "Settings navigation or preference controls are missing.\n";
+        return 1;
+    }
+    settingsNavigation->click();
+    if (pageStack->currentIndex() != 2 ||
+        !settingsNavigation->property("active").toBool() ||
+        speedPreference->currentData().toInt() != static_cast<int>(nlsi::SpeedUnit::KilometresPerHour) ||
+        volumePreference->currentData().toInt() != static_cast<int>(nlsi::VolumeUnit::Liters) ||
+        currencyPreference->currentData().toInt() != static_cast<int>(nlsi::CurrencyUnit::Euro) ||
+        distancePreference->currentData().toInt() != static_cast<int>(nlsi::DistanceUnit::Kilometres))
+    {
+        std::cerr << "Settings page navigation or default selections are incorrect.\n";
+        return 1;
+    }
+    profileTab->click();
+    if (settingsTabs->currentIndex() != 1 ||
+        !window.findChild<QLabel*>("profileComingSoon") ||
+        window.findChild<QLabel*>("profileComingSoon")->text() != "COMING SOON")
+    {
+        std::cerr << "Profile tab does not show the Coming Soon state.\n";
+        return 1;
+    }
+    preferenceTab->click();
+    speedPreference->setCurrentIndex(
+        speedPreference->findData(static_cast<int>(nlsi::SpeedUnit::MilesPerHour)));
+    volumePreference->setCurrentIndex(
+        volumePreference->findData(static_cast<int>(nlsi::VolumeUnit::UsGallons)));
+    currencyPreference->setCurrentIndex(
+        currencyPreference->findData(static_cast<int>(nlsi::CurrencyUnit::UsDollar)));
+    distancePreference->setCurrentIndex(
+        distancePreference->findData(static_cast<int>(nlsi::DistanceUnit::Miles)));
+    savePreferences->click();
+    if (!window.statusBar()->currentMessage().contains("PREFERENCES SAVED"))
+    {
+        std::cerr << "Saving preferences did not provide success feedback.\n";
+        return 1;
+    }
+    nlsi::TelemetrySnapshot preferenceSnapshot;
+    preferenceSnapshot.values["truck.fuel.amount"] = {"Fuel", "20.01", "L", true};
+    preferenceSnapshot.values["truck.fuel.capacity"] = {"Fuel Capacity", "100", "L", true};
+    preferenceSnapshot.values["truck.cruise_control"] = {"Cruise Control", "25", "m/s", true};
+    preferenceSnapshot.values["job.planned_distance_km"] = {"Planned Distance", "16.09344", "km", true};
+    preferenceSnapshot.values["truck.navigation.distance"] = {"Navigation Distance", "16093.44", "m", true};
+    preferenceSnapshot.values["job.income"] = {"Income", "1234", "game currency", true};
+    window.applySnapshot(preferenceSnapshot);
+    auto* plannedDistance = window.findChild<QLabel*>("plannedDistanceValue");
+    auto* remainingDistance = window.findChild<QLabel*>("remainingDistanceValue");
+    auto* selectedFuel = window.findChild<QLabel*>("fuelValue");
+    auto* selectedCruise = window.findChild<QLabel*>("cruiseValue");
+    auto* selectedIncome = window.findChild<QLabel*>("incomeValue");
+    if (!plannedDistance || plannedDistance->text() != "10.00 MI" ||
+        !remainingDistance || remainingDistance->text() != "10.00 MI" ||
+        !selectedFuel || selectedFuel->text() != "5.29 US GAL / 26.42 US GAL (20.01%)" ||
+        !selectedCruise || selectedCruise->text() != "55.92 MPH - A" ||
+        !selectedIncome || selectedIncome->text() != "1,234.00 GAME CURRENCY")
+    {
+        std::cerr << "Dashboard did not apply the selected units without changing currency denomination.\n";
+        return 1;
+    }
+
     window.close();
+    nlsi::DashboardMainWindow reloadedWindow(nullptr, QString(), dashboardProfilePath);
+    reloadedWindow.applySnapshot(preferenceSnapshot);
+    auto* reloadedFuel = reloadedWindow.findChild<QLabel*>("fuelValue");
+    auto* reloadedDistance = reloadedWindow.findChild<QLabel*>("plannedDistanceValue");
+    if (!reloadedFuel || reloadedFuel->text() != "5.29 US GAL / 26.42 US GAL (20.01%)" ||
+        !reloadedDistance || reloadedDistance->text() != "10.00 MI")
+    {
+        std::cerr << "Dashboard did not load saved preferences on restart.\n";
+        return 1;
+    }
+    reloadedWindow.close();
 
     QTemporaryDir jobDirectory;
-    nlsi::DashboardMainWindow historyWindow(nullptr, jobDirectory.path());
+    QTemporaryDir historyProfileDirectory;
+    nlsi::UserPreferences historyPreferences;
+    historyPreferences.speed = nlsi::SpeedUnit::MilesPerHour;
+    historyPreferences.volume = nlsi::VolumeUnit::UsGallons;
+    historyPreferences.currency = nlsi::CurrencyUnit::UsDollar;
+    historyPreferences.distance = nlsi::DistanceUnit::Miles;
+    nlsi::ProfileStore historyProfileStore(historyProfileDirectory.filePath("profile.nlsi"));
+    QString profileSaveError;
+    if (!historyProfileStore.save(historyPreferences, &profileSaveError))
+    {
+        std::cerr << "Could not create completed-job preference fixture: "
+                  << profileSaveError.toStdString() << ".\n";
+        return 1;
+    }
+    nlsi::DashboardMainWindow historyWindow(
+        nullptr, jobDirectory.path(), historyProfileDirectory.filePath("profile.nlsi"));
     nlsi::TelemetrySnapshot activeJob;
     activeJob.status = nlsi::ConnectionState::Connected;
     activeJob.gameId = "eut2";
     activeJob.gameName = "Euro Truck Simulator 2";
+    activeJob.values["job.income"] = {"Income", "1200", "game currency", true};
+    activeJob.values["job.planned_distance_km"] = {"Planned Distance", "100", "km", true};
+    activeJob.values["job.driven_distance_km"] = {"Driven Distance", "80", "km", true};
+    activeJob.values["job.refueled"] = {"Refueled", "3.785411784", "L", true};
+    activeJob.values["job.total_fuel_consumed"] = {"Total Fuel Consumed", "10", "L", true};
+    activeJob.values["truck.fuel.average_consumption"] = {"Average Fuel Consumption", "0.05", "L/km", true};
+    activeJob.values["job.max_speed_kmh"] = {"Maximum Speed", "90", "km/h", true};
+    activeJob.values["job.average_speed_kmh"] = {"Average Speed", "60", "km/h", true};
     activeJob.values["job.status"] = {"Status", "ACTIVE", "", true};
     activeJob.values["job.cargo"] = {"Cargo", "steel", "", true};
     activeJob.values["job.source_company"] = {"Origin Company", "tramer", "", true};
@@ -374,6 +495,17 @@ int main(int argc, char** argv)
         std::cerr << "Delivered job was not automatically added exactly once to Completed Jobs.\n";
         return 1;
     }
+    bool gameCurrencyPreserved = false;
+    for (QLabel* label : completedCards.front()->findChildren<QLabel*>())
+    {
+        gameCurrencyPreserved = gameCurrencyPreserved ||
+            (label->text().contains("GAME CURRENCY") && !label->text().contains("$"));
+    }
+    if (!gameCurrencyPreserved)
+    {
+        std::cerr << "Completed-job card relabeled a game-currency amount.\n";
+        return 1;
+    }
     bool completedCardValuesFormatted = false;
     for (QLabel* label : completedCards.front()->findChildren<QLabel*>())
     {
@@ -401,6 +533,7 @@ int main(int argc, char** argv)
     }
 
     bool detailDialogShowedFields = false;
+    bool completedMeasurementsConverted = false;
     QTimer::singleShot(0, [&]()
     {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
@@ -410,6 +543,11 @@ int main(int argc, char** argv)
             bool hasFuelCost = false;
             bool fuelCostUnavailable = false;
             bool hasStatus = false;
+            bool hasPdfExport = dialog->findChild<QPushButton*>("exportJobPdfButton") != nullptr;
+            bool hasCurrency = false;
+            bool hasDistance = false;
+            bool hasFuel = false;
+            bool hasSpeed = false;
             bool fieldValuesFormatted = true;
             for (QLabel* label : labels)
             {
@@ -425,6 +563,27 @@ int main(int argc, char** argv)
                     fuelCostUnavailable = value && value->text() == QString::fromUtf8("—");
                 }
                 hasStatus = hasStatus || label->text() == "JOB STATUS";
+                if (label->objectName() == "telemetryLabel")
+                {
+                    auto* fieldValue = label->parentWidget()->findChild<QLabel*>("telemetryValue");
+                    if (label->text() == "INCOME")
+                    {
+                        hasCurrency = fieldValue &&
+                            fieldValue->text() == "1,200.00 GAME CURRENCY";
+                    }
+                    else if (label->text() == "PLANNED DISTANCE")
+                    {
+                        hasDistance = fieldValue && fieldValue->text() == "62.14 MI";
+                    }
+                    else if (label->text() == "REFUELED")
+                    {
+                        hasFuel = fieldValue && fieldValue->text() == "1.00 US GAL";
+                    }
+                    else if (label->text() == "MAX SPEED")
+                    {
+                        hasSpeed = fieldValue && fieldValue->text() == "55.92 MPH";
+                    }
+                }
                 if (label->objectName() == "telemetryValue" &&
                     (label->text() != label->text().toUpper() || !label->font().bold()))
                 {
@@ -432,7 +591,9 @@ int main(int argc, char** argv)
                 }
             }
             detailDialogShowedFields = hasFuelCost && fuelCostUnavailable &&
-                hasStatus && fieldValuesFormatted;
+                hasStatus && hasPdfExport && fieldValuesFormatted;
+            completedMeasurementsConverted =
+                hasCurrency && hasDistance && hasFuel && hasSpeed;
             dialog->accept();
         }
     });
@@ -440,6 +601,28 @@ int main(int argc, char** argv)
     if (!detailDialogShowedFields)
     {
         std::cerr << "Selecting a completed-job card did not show the full detail layout.\n";
+        return 1;
+    }
+    if (!completedMeasurementsConverted)
+    {
+        std::cerr << "Completed-job detail measurements do not use the saved preferences.\n";
+        return 1;
+    }
+
+    QTemporaryDir reportDirectory;
+    const QString reportPath = reportDirectory.filePath("completed-job.pdf");
+    QString reportError;
+    if (!nlsi::writePdfReport(reportPath,
+            "<html><body><h1>NLSI Exclusive Logbook</h1><p>62.14 MI</p></body></html>",
+            &reportError))
+    {
+        std::cerr << "Completed-job PDF output failed: " << reportError.toStdString() << ".\n";
+        return 1;
+    }
+    QFile reportFile(reportPath);
+    if (!reportFile.open(QIODevice::ReadOnly) || !reportFile.read(5).startsWith("%PDF-"))
+    {
+        std::cerr << "Completed-job PDF export did not produce a PDF document.\n";
         return 1;
     }
     historyWindow.close();

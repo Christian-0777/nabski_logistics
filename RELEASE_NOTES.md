@@ -1,3 +1,26 @@
+# NLSI Exclusive Logbook v1.7.4 Beta
+
+## What's new
+
+- Add persistent Preferences for speed, volume, currency, and distance with a
+  two-tab Settings page; Profile is Coming Soon.
+- Encrypt the unified `profile.nlsi` using current-user Windows DPAPI, save
+  atomically, preserve unrelated data, and retain a valid prior profile if an
+  update fails.
+- Centralize presentation conversions and apply preferences to dashboard and
+  completed-job details and PDF reports without changing canonical telemetry
+  or historical job records.
+- Keep known EUR/USD denominations accurate; do not exchange or relabel
+  unknown game-currency amounts.
+- Update application and installer metadata to 1.7.4 Beta.
+
+The source previously had no profile.nlsi storage/encryption implementation
+and no completed-job PDF exporter. The v1.7.4 implementation adds both. Clean
+install, in-place upgrade, and live-game scenarios remain subject to the
+manual verification plan in the installation guide.
+
+---
+
 # NLSI Exclusive Logbook v1.7.3 Beta
 
 ## What's new

@@ -53,8 +53,8 @@ dashboard, both plugin DLLs, and release documents:
 powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1
 ```
 
-The v1.7.3 Beta installer is written to
-`releases\1.7.3-beta\NLSI-Exclusive-Logbook-v1.7.3-beta-Setup.exe` and
+The v1.7.4 Beta installer is written to
+`releases\1.7.4-beta\NLSI-Exclusive-Logbook-v1.7.4-beta-Setup.exe` and
 defaults to `C:\Program Files\Nabski Logistics Solutions Inc`. It uses the
 stable Inno Setup AppId for updates, reuses a valid previous install location,
 closes the dashboard through Windows Restart Manager, and leaves files not
@@ -77,7 +77,7 @@ architecture, and the required SCS exports before packaging.
 The release package includes runtime assets and release documentation; the
 installer and documentation SHA-256 values are written to `manifest.sha256`.
 The final installer, staged payload, release documents, and SHA-256 manifest
-are kept under `releases\1.7.3-beta`.
+are kept under `releases\1.7.4-beta`.
 
 The plugin communicates with the dashboard over the local Windows named pipe `\\.\pipe\nlsi_scs_telemetry`. The dashboard listens through Qt LocalServer. Completed job history, the active recovery record, and the monotonic ID sequence are stored locally in the user's application-data folder.
 
@@ -90,6 +90,12 @@ The plugin communicates with the dashboard over the local Windows named pipe `\\
 - `nlsi_job_history_tests` — ID allocation, active-job restart recovery,
   terminal transitions, atomic records, duplicate events, sequence expansion,
   and malformed-record isolation
-- `nlsi_dashboard_ui_tests` — minimum window size, panel order, em-dash/summary
-  empty states, completed-job navigation/cards/details, and vertical scrolling
+- `nlsi_preferences_tests` — exact conversions, encrypted preference
+  persistence, corrupt-profile handling, and preservation of unrelated data
+- `nlsi_dashboard_ui_tests` — dashboard settings and measurement presentation,
+  completed-job navigation/cards/details, PDF generation, and vertical scrolling
   (runs with Qt's offscreen platform)
+
+Preferences live in the per-user encrypted `profile.nlsi` under Qt's
+application-data location. The installer only manages files in its application
+payload and does not package or remove this profile.

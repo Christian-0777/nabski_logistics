@@ -9,9 +9,11 @@
 #include "GameProcessDetection.h"
 #include "JobHistory.h"
 #include "TelemetryIPC.h"
+#include "UserPreferences.h"
 
 class QLabel;
 class QGroupBox;
+class QComboBox;
 class QLocalServer;
 class QLocalSocket;
 class QStackedWidget;
@@ -24,7 +26,9 @@ namespace nlsi {
 class DashboardMainWindow : public QMainWindow
 {
 public:
-    explicit DashboardMainWindow(QWidget* parent = nullptr, const QString& jobHistoryDirectory = QString());
+    explicit DashboardMainWindow(QWidget* parent = nullptr,
+                                 const QString& jobHistoryDirectory = QString(),
+                                 const QString& profileFilePath = QString());
     ~DashboardMainWindow() override;
 
     void applySnapshot(const TelemetrySnapshot& snapshot);
@@ -32,6 +36,9 @@ public:
 private:
     void buildSidebar();
     void buildContent();
+    void showSettings();
+    void savePreferences();
+    void updateNavigationState(QPushButton* activeButton);
     void startTelemetryListener();
     void handleSocketData(QLocalSocket* socket);
     void updateProcessDetection();
@@ -50,6 +57,15 @@ private:
     QLabel* headerTitle_ = nullptr;
     QPushButton* dashboardNavButton_ = nullptr;
     QPushButton* completedJobsNavButton_ = nullptr;
+    QPushButton* settingsNavButton_ = nullptr;
+    QPushButton* preferenceTabButton_ = nullptr;
+    QPushButton* profileTabButton_ = nullptr;
+    QStackedWidget* settingsTabs_ = nullptr;
+    QComboBox* speedPreference_ = nullptr;
+    QComboBox* volumePreference_ = nullptr;
+    QComboBox* currencyPreference_ = nullptr;
+    QComboBox* distancePreference_ = nullptr;
+    QPushButton* savePreferencesButton_ = nullptr;
     QLocalServer* localServer_ = nullptr;
     QLocalSocket* selectedTelemetrySocket_ = nullptr;
     QTimer* telemetryTimer_ = nullptr;
@@ -61,6 +77,8 @@ private:
     QHash<QLocalSocket*, qint64> lastFrameTimes_;
     TelemetrySnapshot displayedSnapshot_;
     JobHistory jobHistory_;
+    ProfileStore profileStore_;
+    UserPreferences preferences_;
     bool ipcError_ = false;
 
     QLabel* processLabel_ = nullptr;

@@ -3,6 +3,8 @@
 #include <QDateTime>
 #include <QString>
 
+#include "UserPreferences.h"
+
 namespace nlsi {
 
 QString uppercaseDisplayText(const QString& text);
@@ -16,8 +18,12 @@ QString formatArrivalClock(double remainingRealSeconds, const QDateTime& now = Q
 QString formatArrivalEstimate(double remainingGameSeconds, const QDateTime& now = QDateTime::currentDateTime());
 QString formatFuelRemainingPercent(double fuelAmount, double fuelCapacity);
 QString formatFuelDisplay(double fuelAmount, double fuelCapacity);
+QString formatFuelDisplay(double fuelAmount, double fuelCapacity,
+                          const UserPreferences& preferences);
 bool isFuelAtOrBelowWarningThreshold(double fuelAmount, double fuelCapacity);
 QString formatNormalizedPercent(const QString& rawValue, const QString& unit = QString());
 QString formatCruiseKmH(const QString& rawValue, const QString& unit = QString());
+QString formatCruiseSpeed(const QString& rawValue, const QString& unit,
+                          const UserPreferences& preferences);
 
 } // namespace nlsi
