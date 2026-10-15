@@ -1,8 +1,0 @@
-/config.local.php
-/config.php
-/.env
-/logs/*
-!/logs/.htaccess
-*.jsonl
-*.log
-*.sql.dump
