@@ -1,3 +1,25 @@
+# NLSI Exclusive Logbook v1.7.2 Beta
+
+## What's new
+
+- Refined full-width sidebar navigation styling while preserving its width,
+  branding, pages, and dashboard contents.
+- Prevented unchanged telemetry refreshes from needlessly resetting displayed
+  values, keeping the job status field visually stable while still reflecting
+  real status changes.
+- Corrected brake and retarder displays and limited the cruise-control `A`
+  marker to active SDK cruise-control telemetry.
+- Formatted Current Job origin and destination as available company and city
+  values on a single line.
+- Standardized displayed field labels and values as uppercase and bold.
+- Updated release metadata and packaging for v1.7.2 Beta.
+
+The dashboard layout and persisted user data remain unchanged. Automated and
+release-build validation is recorded separately; a successful build does not
+claim live-game validation.
+
+---
+
 # Rebuild Notice — NLSI Exclusive Logbook Beta
 
 ## Why the application is being rebuilt

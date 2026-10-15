@@ -1,0 +1,31 @@
+#include <windows.h>
+
+IDI_ICON1 ICON "nlsi.ico"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 1,7,2,0
+ PRODUCTVERSION 1,7,2,0
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "NABSKI Logistics Solutions Inc.\0"
+            VALUE "FileDescription", "NLSI Exclusive Logbook\0"
+            VALUE "FileVersion", "1.7.2.0\0"
+            VALUE "InternalName", "nlsi_dashboard\0"
+            VALUE "OriginalFilename", "nlsi_dashboard.exe\0"
+            VALUE "ProductName", "NLSI Exclusive Logbook\0"
+            VALUE "ProductVersion", "1.7.2 Beta\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

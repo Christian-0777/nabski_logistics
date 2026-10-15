@@ -1,107 +1,148 @@
-# ==========================================
-# NLSI TELEMETRY
-# Git Ignore
-# ==========================================
+# ==============================================================================
+# NLSI Exclusive Logbook - Git Ignore
+# ==============================================================================
 
-# ==========================================
-# BUILD / CMAKE
-# ==========================================
-
-/build/
+# ------------------------------------------------------------------------------
+# 1. CMake and Build Directories
+# ------------------------------------------------------------------------------
+build/
+build-*/
+build-x86/
+build-x64/
+cmake-build-*/
+out/
+bin/
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
 CTestTestfile.cmake
 Makefile
 compile_commands.json
+install_manifest.txt
+CMakeScripts/
+Testing/
 
-# CMake generated files
-*.cmake.user
+# Ninja build artifacts
 *.ninja
 .ninja_deps
 .ninja_log
 
-# ==========================================
-# C++ / MSVC GENERATED FILES
-# ==========================================
+# CMake user settings
+*.cmake.user
 
+# ------------------------------------------------------------------------------
+# 2. Compiled Binaries and Build Artifacts (EXE, DLL, LIB, OBJ, PDB, etc.)
+# ------------------------------------------------------------------------------
 *.obj
 *.o
+*.a
+*.lib
+*.dll
+*.so
+*.dylib
+*.exe
 *.pdb
 *.ilk
 *.idb
 *.ipdb
 *.iobj
+*.ipch
+*.pch
+*.exp
+*.res
 *.tlog
 *.lastbuildstate
-*.exp
-*.pch
-*.res
+*.manifest
+*.i
 
-# Visual Studio
+# ------------------------------------------------------------------------------
+# 3. Qt Generated Files and Caches
+# ------------------------------------------------------------------------------
+moc_*.cpp
+moc_*.h
+ui_*.h
+qrc_*.cpp
+qrc_*.h
+*.qmlc
+*.jsc
+*.rcc
+.qt/
+*automoc*
+*_autogen/
+qmake/
+
+# ------------------------------------------------------------------------------
+# 4. Visual Studio and IDE Metadata
+# ------------------------------------------------------------------------------
 .vs/
 *.suo
 *.user
 *.userosscache
 *.sln.docstates
-
-# ==========================================
-# PYTHON
-# ==========================================
-
-__pycache__/
-*.py[cod]
-*$py.class
-
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-
-# Python virtual environments
-.venv/
-venv/
-env/
-ENV/
-env.bak/
-venv.bak/
-
-# ==========================================
-# IDE / EDITORS
-# ==========================================
-
+*.VC.db
+*.VC.opendb
 .vscode/
 .idea/
+*.sublime-project
+*.sublime-workspace
+.cache/
 
-# ==========================================
-# ENVIRONMENT / SECRETS
-# ==========================================
+# ------------------------------------------------------------------------------
+# 5. Release, Installer, and Staging Outputs
+# ------------------------------------------------------------------------------
+releases/
+release/
+dist/
+staging/
+payload/
+installer/output/
+installer/staging/
+installer/temp/
+*.iss.tmp
+*.iss.bak
+*.iss~
 
+# ------------------------------------------------------------------------------
+# 6. Temporary Files, Logs, Crash Dumps, and Test Output
+# ------------------------------------------------------------------------------
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*.old
+*.orig
+*~
+*.log
+logs/
+/logs/
+build-output.log
+build-test.log
+*.dmp
+*.mdmp
+crash_dumps/
+test_output.txt
+test/output/
+test/results/
+
+# ------------------------------------------------------------------------------
+# 7. Local Environment Files, Credentials, Tokens, and Secrets
+# ------------------------------------------------------------------------------
 .env
-.env.local
-.env.*.local
-
-# Keep example environment files
+.env.*
 !.env.example
-
-# Credentials / secrets
-/secrets/
+secrets/
 **/secrets/
-
 *.secret
 *.secret.*
 credentials.json
 **/credentials.json
 *-credentials.json
 *_credentials.json
-
 secrets.json
 **/secrets.json
-
 token.json
 **/token.json
-
 *.pem
 *.key
 *.p12
@@ -109,94 +150,31 @@ token.json
 *.jks
 *.keystore
 
-# ==========================================
-# LOGS
-# ==========================================
+# ------------------------------------------------------------------------------
+# 8. Local SDK Extraction Folders and Archives
+# ------------------------------------------------------------------------------
+scs_sdk/
+scs_sdk_*/scs_sdk_*.zip
+scs_sdk_*.zip
+SCS_SDK*/
 
-*.log
-/logs/
-change-log/
-build-output.log
-build-test.log
+# ------------------------------------------------------------------------------
+# 9. Python Caches and Virtual Environments (Helper Scripts)
+# ------------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+ENV/
 
-# ==========================================
-# RUNTIME / GENERATED DATA
-# ==========================================
-
-# Session/runtime output
-/data/sessions/
-/data/cache/
-/data/runtime/
-
-# Test output
-/test/output/
-
-# Keep directory placeholders
-!/data/sessions/.gitkeep
-!/test/output/.gitkeep
-
-# JSONL/runtime telemetry
-*.jsonl
-
-# ==========================================
-# TEMPORARY FILES
-# ==========================================
-
-*.tmp
-*.temp
-*.bak
-*.swp
-*.swo
-*.old
-
-# Inno Setup temporary files
-*.iss.tmp
-*.iss.bak
-*.iss~
-
-# ==========================================
-# INSTALLER BUILD TEMPORARY FILES
-# ==========================================
-
-/installer/staging/
-/installer/temp/
-/installer/output/
-
-# ==========================================
-# GENERATED APPLICATION BINARIES
-# ==========================================
-
-# Ignore generated binaries inside normal build folders
-/build/**/*.exe
-/build/**/*.dll
-/build/**/*.lib
-
-# ==========================================
-# SCS SDK / EXTERNAL SDK EXTRACTS
-# ==========================================
-
-/scs_sdk/
-/scs_sdk_*/
-/SCS_SDK*/
-
-# ==========================================
-# OS FILES
-# ==========================================
-
+# ------------------------------------------------------------------------------
+# 10. Operating System Files
+# ------------------------------------------------------------------------------
 .DS_Store
 Thumbs.db
 Desktop.ini
-
-# ==========================================
-# LOCAL USER DATA
-# ==========================================
-
-/data/user/
-/data/local/
-/data/cache/
-
-# ==========================================
-# NLSI LOCAL CONFIGURATION
-# ==========================================
-
-/config/local/
