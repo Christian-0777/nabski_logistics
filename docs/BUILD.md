@@ -53,8 +53,8 @@ dashboard, both plugin DLLs, and release documents:
 powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1
 ```
 
-The v1.7.2 Beta installer is written to
-`releases\1.7.2-beta\NLSI-Exclusive-Logbook-v1.7.2-beta-Setup.exe` and
+The v1.7.3 Beta installer is written to
+`releases\1.7.3-beta\NLSI-Exclusive-Logbook-v1.7.3-beta-Setup.exe` and
 defaults to `C:\Program Files\Nabski Logistics Solutions Inc`. It uses the
 stable Inno Setup AppId for updates, reuses a valid previous install location,
 closes the dashboard through Windows Restart Manager, and leaves files not
@@ -62,8 +62,8 @@ owned by the installer alone.
 
 The dashboard and Qt runtime are installed at the destination root. The x64
 and x86 plugins are included at `plugin\win_x64\nlsi_scs_plugin.dll` and
-`plugin\win_x86\nlsi_scs_plugin.dll`. The installer offers optional ETS2 and
-ATS plugin tasks when an installed executable is found in the default Steam
+`plugin\win_x86\nlsi_scs_plugin.dll`. The installer automatically deploys ETS2 and ATS plugins when an installed
+executable is found in the default Steam
 library or a Steam library recorded in `libraryfolders.vdf`. It copies each
 architecture only to an existing, matching game architecture directory.
 Existing unmarked or hash-changed DLLs are not overwritten. Marked plugins are
@@ -77,7 +77,7 @@ architecture, and the required SCS exports before packaging.
 The release package includes runtime assets and release documentation; the
 installer and documentation SHA-256 values are written to `manifest.sha256`.
 The final installer, staged payload, release documents, and SHA-256 manifest
-are kept under `releases\1.7.2-beta`.
+are kept under `releases\1.7.3-beta`.
 
 The plugin communicates with the dashboard over the local Windows named pipe `\\.\pipe\nlsi_scs_telemetry`. The dashboard listens through Qt LocalServer. Completed job history, the active recovery record, and the monotonic ID sequence are stored locally in the user's application-data folder.
 

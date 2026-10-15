@@ -20,6 +20,7 @@
 #include <QLocale>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QMetaObject>
 #include <QPixmap>
 #include <QPushButton>
 #include <QSizePolicy>
@@ -28,6 +29,7 @@
 #include <QStatusBar>
 #include <QStyle>
 #include <QThreadPool>
+#include <QThread>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
@@ -333,7 +335,7 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
     : QMainWindow(parent),
       jobHistory_(jobHistoryDirectory)
 {
-    setWindowTitle("NLSI Exclusive Logbook 1.7.2 Beta");
+    setWindowTitle("NLSI Exclusive Logbook 1.7.3 Beta");
     const QString iconPath = QFileInfo(QDir::currentPath(), "resources/nlsi.ico").exists()
         ? QDir::currentPath() + "/resources/nlsi.ico"
         : QCoreApplication::applicationDirPath() + "/resources/nlsi.ico";
@@ -343,12 +345,13 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
 
     setStyleSheet(QStringLiteral(
         "QWidget { color: #28232A; background: #FFFFFF; }"
+        "QLabel { font-weight: 700; }"
         "QWidget#rootWidget { background: #FFFFFF; }"
         "QWidget#sidebar { background: #FFF8FB; border-right: 1px solid #FFD1E6; }"
         "QLabel#sidebarTitle { font: 700 %1px 'Segoe UI'; color: #F896B9; }"
-        "QLabel#sidebarSubtitle { font: 500 %2px 'Segoe UI'; color: #7E6672; }"
+        "QLabel#sidebarSubtitle { font: 700 %2px 'Segoe UI'; color: #7E6672; }"
         "QLabel#sidebarGroup { font: 700 10px 'Segoe UI'; color: #A15E7D; letter-spacing: 1px; padding: 2px 4px; }"
-        "QPushButton[sidebarNavButton=\"true\"] { font: 600 13px 'Segoe UI'; color: #665B62; background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 9px 12px; text-align: left; }"
+        "QPushButton[sidebarNavButton=\"true\"] { font: 700 13px 'Segoe UI'; color: #665B62; background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 9px 12px; text-align: left; }"
         "QPushButton[sidebarNavButton=\"true\"]:hover { color: #4D3440; background: #FDEBF3; border-color: #F9D6E6; }"
         "QPushButton[sidebarNavButton=\"true\"]:focus { border-color: #F896B9; }"
         "QPushButton[sidebarNavButton=\"true\"]:pressed { color: #4D3440; background: #F5C6DC; border-color: #E9A9C4; }"
@@ -360,8 +363,8 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
         "QPushButton#completedJobCard:hover { background: #FFF7FA; }"
         "QLabel#headerTitle { font: 700 %3px 'Segoe UI'; color: #28232A; }"
         "QLabel#headerMode { font: 700 10px 'Segoe UI'; color: #A15E7D; }"
-        "QLabel#headerMeta { font: 500 10px 'Segoe UI'; color: #665B62; }"
-        "QLabel#processState, QLabel#connectionState { font: 600 10px 'Segoe UI'; color: #665B62; }"
+        "QLabel#headerMeta { font: 700 10px 'Segoe UI'; color: #665B62; }"
+        "QLabel#processState, QLabel#connectionState { font: 700 10px 'Segoe UI'; color: #665B62; }"
         "QLabel#telemetryLabel { font: 700 %4px 'Segoe UI'; color: #A15E7D; letter-spacing: 0.35px; padding-top: 2px; }"
         "QLabel#telemetryValue { font: 700 %4px 'Segoe UI'; color: #28232A; min-height: 18px; background: #FFFFFF; }"
         "QLabel#gameApiVersionLabel { font: 700 %4px 'Segoe UI'; color: #A15E7D; }"
@@ -402,13 +405,13 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
     auto* statusBar = new QStatusBar(this);
     statusBar->setSizeGripEnabled(false);
     statusBar->setStyleSheet(
-        "QStatusBar { background: #FFF7FA; border-top: 1px solid #FFD1E6; color: #665B62; font: 10px 'Segoe UI'; padding: 0 8px; }"
+        "QStatusBar { background: #FFF7FA; border-top: 1px solid #FFD1E6; color: #665B62; font: 700 10px 'Segoe UI'; padding: 0 8px; }"
     );
-    statusBar->showMessage("READ-ONLY LOCAL TELEMETRY • VERSION 1.7.2 BETA");
+    statusBar->showMessage("READ-ONLY LOCAL TELEMETRY • VERSION 1.7.3 BETA");
     setStatusBar(statusBar);
     if (!jobHistory_.errorString().isEmpty())
     {
-        statusBar->showMessage("JOB HISTORY WARNING: " + jobHistory_.errorString());
+        statusBar->showMessage(uppercaseDisplayText("JOB HISTORY WARNING: " + jobHistory_.errorString()));
     }
     refreshCompletedJobs();
 
@@ -509,7 +512,7 @@ void DashboardMainWindow::buildSidebar()
     footerDivider->setFrameShadow(QFrame::Plain);
     footerDivider->setStyleSheet("QFrame { color: #FFD1E6; background: #FFD1E6; max-height: 1px; }");
     layout->addWidget(footerDivider);
-    auto* version = new QLabel("1.7.2 BETA", sidebar_);
+    auto* version = new QLabel("1.7.3 BETA", sidebar_);
     version->setObjectName("sidebarSubtitle");
     layout->addWidget(version);
 }
@@ -740,7 +743,7 @@ void DashboardMainWindow::refreshCompletedJobs()
         qWarning().noquote() << "NLSI job history:" << loadError;
         if (statusBar())
         {
-            statusBar()->showMessage("JOB HISTORY WARNING: " + loadError);
+            statusBar()->showMessage(uppercaseDisplayText("JOB HISTORY WARNING: " + loadError));
         }
     }
 
@@ -921,6 +924,10 @@ void DashboardMainWindow::startTelemetryListener()
                 receiveBuffers_.remove(socket);
                 clientSnapshots_.remove(socket);
                 lastFrameTimes_.remove(socket);
+                if (selectedTelemetrySocket_ == socket)
+                {
+                    selectedTelemetrySocket_ = nullptr;
+                }
                 socket->deleteLater();
                 refreshDisplayedSnapshot();
             });
@@ -931,7 +938,8 @@ void DashboardMainWindow::startTelemetryListener()
     if (!localServer_->listen(QStringLiteral("nlsi_scs_telemetry")))
     {
         ipcError_ = true;
-        connectionLabel_->setText(QString("TELEMETRY CONNECTION: ERROR — %1").arg(localServer_->errorString()));
+        connectionLabel_->setText(
+            uppercaseDisplayText(QString("TELEMETRY CONNECTION: ERROR — %1").arg(localServer_->errorString())));
     }
 }
 
@@ -980,6 +988,7 @@ void DashboardMainWindow::setProcessState(GameProcessState state)
     {
         processState_ = state;
         clientSnapshots_.clear();
+        selectedTelemetrySocket_ = nullptr;
     }
     processLabel_->setText("GAME DETECTION: " + processStateText(processState_));
     refreshDisplayedSnapshot();
@@ -995,7 +1004,7 @@ void DashboardMainWindow::refreshDisplayedSnapshot()
             clientSnapshots_.remove(it.key());
         }
     }
-    const QString dateText = QDateTime::currentDateTime().toString("ddd d MMM yyyy  hh:mm:ss");
+    const QString dateText = QDateTime::currentDateTime().toString("ddd d MMM yyyy  hh:mm:ss").toUpper();
     if (dateLabel_->text() != dateText)
     {
         dateLabel_->setText(dateText);
@@ -1011,23 +1020,30 @@ void DashboardMainWindow::refreshDisplayedSnapshot()
     else if (processState_ == GameProcessState::Ets2Running ||
              processState_ == GameProcessState::AtsRunning)
     {
-        QLocalSocket* newestSocket = nullptr;
-        qint64 newestFrame = -1;
-        for (auto it = clientSnapshots_.cbegin(); it != clientSnapshots_.cend(); ++it)
+        if (selectedTelemetrySocket_ &&
+            (!clientSnapshots_.contains(selectedTelemetrySocket_) ||
+             !snapshotMatchesProcess(clientSnapshots_.value(selectedTelemetrySocket_), processState_) ||
+             now - lastFrameTimes_.value(selectedTelemetrySocket_, 0) > 2500))
         {
-            if (snapshotMatchesProcess(it.value(), processState_))
+            selectedTelemetrySocket_ = nullptr;
+        }
+        if (!selectedTelemetrySocket_)
+        {
+            qint64 newestFrame = -1;
+            for (auto it = clientSnapshots_.cbegin(); it != clientSnapshots_.cend(); ++it)
             {
                 const qint64 frameTime = lastFrameTimes_.value(it.key(), 0);
-                if (frameTime > newestFrame)
+                if (snapshotMatchesProcess(it.value(), processState_) &&
+                    frameTime > newestFrame)
                 {
                     newestFrame = frameTime;
-                    newestSocket = it.key();
+                    selectedTelemetrySocket_ = it.key();
                 }
             }
         }
-        if (newestSocket)
+        if (selectedTelemetrySocket_)
         {
-            snapshot = clientSnapshots_.value(newestSocket);
+            snapshot = clientSnapshots_.value(selectedTelemetrySocket_);
         }
         else
         {
@@ -1056,14 +1072,52 @@ void DashboardMainWindow::refreshDisplayedSnapshot()
 
 void DashboardMainWindow::applySnapshot(const TelemetrySnapshot& snapshot)
 {
+    if (QThread::currentThread() != thread())
+    {
+        QMetaObject::invokeMethod(this, [this, snapshot]() { applySnapshot(snapshot); },
+            Qt::QueuedConnection);
+        return;
+    }
+
     TelemetrySnapshot viewSnapshot = snapshot;
+    const std::optional<JobRecord> previousActiveJob = jobHistory_.activeJob();
+    const bool startsJob = [&]()
+    {
+        const auto status = snapshot.values.find("job.status");
+        return status != snapshot.values.end() && status->second.available &&
+            jobStatusFromString(status->second.value) == JobStatus::Active;
+    }();
+    const bool historyUpdated = jobHistory_.processSnapshot(snapshot, QDateTime::currentDateTimeUtc());
+
+    const TelemetrySnapshot* retainedJobSnapshot = nullptr;
     if (jobHistory_.activeJob())
     {
-        viewSnapshot.values["job.id"] = {
-            "Job ID", jobHistory_.activeJob()->id, "", true
-        };
+        retainedJobSnapshot = &jobHistory_.activeJob()->snapshot;
     }
-    const bool historyUpdated = jobHistory_.processSnapshot(snapshot, QDateTime::currentDateTimeUtc());
+    else if (previousActiveJob)
+    {
+        retainedJobSnapshot = &previousActiveJob->snapshot;
+    }
+    else if (!startsJob)
+    {
+        retainedJobSnapshot = &displayedSnapshot_;
+    }
+    if (retainedJobSnapshot)
+    {
+        for (const auto& field : retainedJobSnapshot->values)
+        {
+            if (field.first.compare(0, 4, "job.") != 0)
+            {
+                continue;
+            }
+            const auto current = viewSnapshot.values.find(field.first);
+            if (current == viewSnapshot.values.end() || !current->second.available ||
+                trimString(current->second.value).empty())
+            {
+                viewSnapshot.values[field.first] = field.second;
+            }
+        }
+    }
     if (jobHistory_.activeJob())
     {
         viewSnapshot.values["job.id"] = {
@@ -1077,18 +1131,19 @@ void DashboardMainWindow::applySnapshot(const TelemetrySnapshot& snapshot)
         {
             if (!jobHistory_.errorString().isEmpty())
             {
-                statusBar()->showMessage("JOB HISTORY WARNING: " + jobHistory_.errorString());
+                statusBar()->showMessage(
+                    uppercaseDisplayText("JOB HISTORY WARNING: " + jobHistory_.errorString()));
             }
             else
             {
-                statusBar()->showMessage("JOB RECORD SAVED: " +
-                    QString::fromStdString(viewSnapshot.values["job.id"].value));
+                statusBar()->showMessage(uppercaseDisplayText("JOB RECORD SAVED: " +
+                    QString::fromStdString(viewSnapshot.values["job.id"].value)));
             }
         }
     }
     else if (!jobHistory_.errorString().isEmpty() && statusBar())
     {
-        statusBar()->showMessage("JOB HISTORY ERROR: " + jobHistory_.errorString());
+        statusBar()->showMessage(uppercaseDisplayText("JOB HISTORY ERROR: " + jobHistory_.errorString()));
     }
     displayedSnapshot_ = viewSnapshot;
     const QString connectionText =
@@ -1262,12 +1317,12 @@ void DashboardMainWindow::applySnapshot(const TelemetrySnapshot& snapshot)
         const QString formattedRpm = formatFixedNumber(rpm.first, "RPM");
         set(rpmGearValue_, QString("%1 / %2").arg(formattedRpm, gear));
     }
+    const auto cruise = rawValue("truck.cruise_control");
+    double cruiseSpeed = 0.0;
+    const bool cruiseActive = cruise.first != unavailable &&
+        parseDoubleValue(cruise.first, cruiseSpeed) && cruiseSpeed > 0.0;
     {
         const auto throttle = rawValue("truck.effective.throttle");
-        const auto cruise = rawValue("truck.cruise_control");
-        double cruiseSpeed = 0.0;
-        const bool cruiseActive = cruise.first != unavailable &&
-            parseDoubleValue(cruise.first, cruiseSpeed) && cruiseSpeed > 0.0;
         const QString throttlePercent = throttle.first == unavailable
             ? unavailable
             : formatNormalizedPercent(throttle.first, throttle.second);
@@ -1284,12 +1339,13 @@ void DashboardMainWindow::applySnapshot(const TelemetrySnapshot& snapshot)
         }
         else
         {
-            set(brakeValue_, formatNormalizedPercent(brake.first, brake.second));
+            const QString brakeText = formatNormalizedPercent(brake.first, brake.second);
+            set(brakeValue_, cruiseActive && brakeText != unavailable
+                ? brakeText + " - A"
+                : brakeText);
         }
     }
     {
-        const auto cruise = rawValue("truck.cruise_control");
-        double cruiseSpeed = 0.0;
         if (cruise.first == unavailable || !parseDoubleValue(cruise.first, cruiseSpeed))
         {
             set(cruiseValue_, unavailable);
@@ -1311,7 +1367,10 @@ void DashboardMainWindow::applySnapshot(const TelemetrySnapshot& snapshot)
         }
         else
         {
-            set(retarderValue_, fieldText("truck.brake.retarder"));
+            const QString retarderText = fieldText("truck.brake.retarder");
+            set(retarderValue_, cruiseActive && retarderText != unavailable
+                ? retarderText + " - A"
+                : retarderText);
         }
     }
 
@@ -1336,7 +1395,7 @@ void DashboardMainWindow::applySnapshot(const TelemetrySnapshot& snapshot)
     const QString latestEvent = fieldText("telemetry.event.latest");
     const QString summaryText = latestEvent == unavailable
         ? "NO EVENTS AVAILABLE."
-        : "LATEST SDK EVENT: " + latestEvent;
+        : uppercaseDisplayText("LATEST SDK EVENT: " + latestEvent);
     if (summaryValue_->text() != summaryText)
     {
         summaryValue_->setText(summaryText);

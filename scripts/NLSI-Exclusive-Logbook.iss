@@ -1,8 +1,8 @@
 ; NLSI Exclusive Logbook installer
-; Product version: 1.7.2 Beta
+; Product version: 1.7.3 Beta
 
 #define MyAppName "NLSI Exclusive Logbook"
-#define MyAppVersion "1.7.2 Beta"
+#define MyAppVersion "1.7.3 Beta"
 #define MyAppPublisher "NABSKI Logistics Solutions Inc."
 #define MyAppExeName "nlsi_dashboard.exe"
 #define PluginFileName "nlsi_scs_plugin.dll"
@@ -19,15 +19,15 @@ AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={code:GetDefaultInstallDir}
 DefaultGroupName={#MyAppName}
-OutputDir=..\releases\1.7.2-beta
-OutputBaseFilename=NLSI-Exclusive-Logbook-v1.7.2-beta-Setup
+OutputDir=..\releases\1.7.3-beta
+OutputBaseFilename=NLSI-Exclusive-Logbook-v1.7.3-beta-Setup
 SetupIconFile=..\resources\nlsi.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
-VersionInfoVersion=1.7.2.0
+VersionInfoVersion=1.7.3.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} Setup - {#MyAppVersion}
 VersionInfoProductName={#MyAppName}
-VersionInfoProductVersion=1.7.2.0
+VersionInfoProductVersion=1.7.3.0
 ArchitecturesAllowed=x64os
 ArchitecturesInstallIn64BitMode=x64os
 PrivilegesRequired=admin
@@ -44,8 +44,6 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
-Name: "ets2plugin"; Description: "Install architecture-matched NLSI plugins for Euro Truck Simulator 2"; Check: IsETS2PluginAvailable; Flags: checkedonce
-Name: "atsplugin"; Description: "Install architecture-matched NLSI plugins for American Truck Simulator"; Check: IsATSPluginAvailable; Flags: checkedonce
 
 [Files]
 Source: "{#ReleasePayloadDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -61,7 +59,7 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: no
 const
   AppUninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{B58E42DA-BC15-4FD0-9DCC-44E4E14D374D}_is1';
   ProductName = 'NLSI Exclusive Logbook';
-  ProductVersion = '1.7.2 Beta';
+  ProductVersion = '1.7.3 Beta';
   ETS2FolderName = 'Euro Truck Simulator 2';
   ATSFolderName = 'American Truck Simulator';
   PluginDllName = 'nlsi_scs_plugin.dll';
@@ -210,6 +208,7 @@ end;
 function IsRecognizedNLSIMarker(const Marker: String): Boolean;
 begin
   Result :=
+    (Marker = 'NLSI Exclusive Logbook 1.7.3 Beta') or
     (Marker = 'NLSI Exclusive Logbook 1.7.2 Beta') or
     (Marker = 'NLSI Exclusive Logbook 1.7.1 Beta') or
     (Marker = 'NLSI Exclusive Logbook 1.7.0 Beta') or
@@ -218,6 +217,7 @@ begin
     (Marker = 'NLSI Exclusive Logbook 1.6.7 Beta') or
     (Marker = 'NLSI Exclusive Logbook 1.6.6 Beta') or
     (Marker = 'NLSI Exclusive Logbook 1.6.5 Beta') or
+    (Pos('NLSI Exclusive Logbook 1.7.3 Beta|', Marker) = 1) or
     (Pos('NLSI Exclusive Logbook 1.7.2 Beta|', Marker) = 1) or
     (Pos('NLSI Exclusive Logbook 1.7.1 Beta|', Marker) = 1) or
     (Pos('NLSI Exclusive Logbook 1.7.0 Beta|', Marker) = 1) or
@@ -292,18 +292,6 @@ begin
   Result := AddBackslash(ATSX86Directory) + 'plugins\' + PluginDllName;
 end;
 
-function IsETS2Installed: Boolean;
-begin
-  ETS2RootPath := FindGameRoot(ETS2FolderName, 'eurotrucks2.exe');
-  Result := ETS2RootPath <> '';
-end;
-
-function IsATSInstalled: Boolean;
-begin
-  ATSRootPath := FindGameRoot(ATSFolderName, 'amtrucks.exe');
-  Result := ATSRootPath <> '';
-end;
-
 function GetDefaultInstallDir(Param: String): String;
 var
   PreviousInstallDir: String;
@@ -345,58 +333,37 @@ begin
     FileExists(AddBackslash(ArchitectureDirectory) + ExecutableName);
 end;
 
-function IsPluginTaskSelected(const TaskName: String; const GameRoot: String;
+function IsPluginTargetInstallable(const GameRoot: String;
   const ArchitectureDirectory: String; const ExecutableName: String;
   const TargetFile: String): Boolean;
 begin
-  Result := WizardIsTaskSelected(TaskName) and (GameRoot <> '') and
+  Result := (GameRoot <> '') and
     HasMatchingGameExecutable(ArchitectureDirectory, ExecutableName) and
     PluginCanBeReplaced(TargetFile);
 end;
 
 function ShouldInstallETS2X64: Boolean;
 begin
-  Result := IsPluginTaskSelected('ets2plugin', ETS2RootPath, ETS2X64Directory,
+  Result := IsPluginTargetInstallable(ETS2RootPath, ETS2X64Directory,
     'eurotrucks2.exe', ETS2X64PluginPath);
 end;
 
 function ShouldInstallETS2X86: Boolean;
 begin
-  Result := IsPluginTaskSelected('ets2plugin', ETS2RootPath, ETS2X86Directory,
+  Result := IsPluginTargetInstallable(ETS2RootPath, ETS2X86Directory,
     'eurotrucks2.exe', ETS2X86PluginPath);
 end;
 
 function ShouldInstallATSX64: Boolean;
 begin
-  Result := IsPluginTaskSelected('atsplugin', ATSRootPath, ATSX64Directory,
+  Result := IsPluginTargetInstallable(ATSRootPath, ATSX64Directory,
     'amtrucks.exe', ATSX64PluginPath);
 end;
 
 function ShouldInstallATSX86: Boolean;
 begin
-  Result := IsPluginTaskSelected('atsplugin', ATSRootPath, ATSX86Directory,
+  Result := IsPluginTargetInstallable(ATSRootPath, ATSX86Directory,
     'amtrucks.exe', ATSX86PluginPath);
-end;
-
-function AnyInstallablePlugin(const GameRoot: String; const ExecutableName: String;
-  const X64Directory: String; const X86Directory: String;
-  const X64Target: String; const X86Target: String): Boolean;
-begin
-  Result := (GameRoot <> '') and
-    ((HasMatchingGameExecutable(X64Directory, ExecutableName) and PluginCanBeReplaced(X64Target)) or
-     (HasMatchingGameExecutable(X86Directory, ExecutableName) and PluginCanBeReplaced(X86Target)));
-end;
-
-function IsETS2PluginAvailable: Boolean;
-begin
-  Result := AnyInstallablePlugin(ETS2RootPath, 'eurotrucks2.exe', ETS2X64Directory, ETS2X86Directory,
-    ETS2X64PluginPath, ETS2X86PluginPath);
-end;
-
-function IsATSPluginAvailable: Boolean;
-begin
-  Result := AnyInstallablePlugin(ATSRootPath, 'amtrucks.exe', ATSX64Directory, ATSX86Directory,
-    ATSX64PluginPath, ATSX86PluginPath);
 end;
 
 function GameProcessIsRunning(const ImageName: String; var ErrorMessage: String): Boolean;
@@ -502,40 +469,45 @@ begin
     end;
   end;
 
-  if WizardIsTaskSelected('ets2plugin') then
-  begin
-    if ShouldInstallETS2X64 and not PreparePluginTarget(ETS2X64PluginPath, ETS2X64Directory) then
-      Result := 'Could not safely prepare the ETS2 x64 plugin directory.';
-    if (Result = '') and ShouldInstallETS2X86 and
-       not PreparePluginTarget(ETS2X86PluginPath, ETS2X86Directory) then
-      Result := 'Could not safely prepare the ETS2 x86 plugin directory.';
-  end;
-  if WizardIsTaskSelected('atsplugin') and (Result = '') then
-  begin
-    if ShouldInstallATSX64 and not PreparePluginTarget(ATSX64PluginPath, ATSX64Directory) then
-      Result := 'Could not safely prepare the ATS x64 plugin directory.';
-    if (Result = '') and ShouldInstallATSX86 and
-       not PreparePluginTarget(ATSX86PluginPath, ATSX86Directory) then
-      Result := 'Could not safely prepare the ATS x86 plugin directory.';
-  end;
+  if ShouldInstallETS2X64 and not PreparePluginTarget(ETS2X64PluginPath, ETS2X64Directory) then
+    Result := 'Could not safely prepare the ETS2 x64 plugin. Close ETS2 and retry.';
+  if (Result = '') and ShouldInstallETS2X86 and
+     not PreparePluginTarget(ETS2X86PluginPath, ETS2X86Directory) then
+    Result := 'Could not safely prepare the ETS2 x86 plugin. Close ETS2 and retry.';
+  if (Result = '') and ShouldInstallATSX64 and
+     not PreparePluginTarget(ATSX64PluginPath, ATSX64Directory) then
+    Result := 'Could not safely prepare the ATS x64 plugin. Close ATS and retry.';
+  if (Result = '') and ShouldInstallATSX86 and
+     not PreparePluginTarget(ATSX86PluginPath, ATSX86Directory) then
+    Result := 'Could not safely prepare the ATS x86 plugin. Close ATS and retry.';
 end;
 
 procedure InstallPlugin(const SourceFile: String; const TargetFile: String;
-  const ArchitectureDirectory: String; const TaskSelected: Boolean; var Skipped: String);
+  const ArchitectureDirectory: String; const ShouldInstall: Boolean; var Skipped: String);
 var
   MarkerContents: String;
 begin
-  if not TaskSelected then
-    Exit;
-  if not PreparePluginTarget(TargetFile, ArchitectureDirectory) then
+  if not ShouldInstall then
   begin
-    if Skipped <> '' then
-      Skipped := Skipped + #13#10;
-    Skipped := Skipped + TargetFile + ' (directory unavailable or existing file is not owned by NLSI)';
+    if DirExists(ArchitectureDirectory) and FileExists(TargetFile) and
+       not PluginCanBeReplaced(TargetFile) then
+    begin
+      if Skipped <> '' then
+        Skipped := Skipped + #13#10;
+      Skipped := Skipped + TargetFile +
+        ' (existing DLL is not an unchanged NLSI-managed file; it was not replaced)';
+    end;
     Exit;
   end;
+  if not PreparePluginTarget(TargetFile, ArchitectureDirectory) then
+    RaiseException('Could not safely prepare the NLSI plugin DLL: ' + TargetFile +
+      '. Close the game and any process using this DLL, then retry.');
   if not CopyFile(SourceFile, TargetFile, False) then
-    RaiseException('Failed to install the architecture-matched plugin: ' + TargetFile);
+    RaiseException('Could not replace the plugin DLL: ' + TargetFile +
+      '. Close the game and any process using this DLL, then run the installer again.');
+  if CompareText(GetSHA256OfFile(SourceFile), GetSHA256OfFile(TargetFile)) <> 0 then
+    RaiseException('Plugin replacement verification failed: ' + TargetFile +
+      '. The update was not completed; close the game and retry.');
   MarkerContents := ProductName + ' ' + ProductVersion + '|' + GetSHA256OfFile(TargetFile);
   if not SaveStringToFile(TargetFile + PluginMarkerSuffix, MarkerContents, False) then
     RaiseException('Could not write the NLSI ownership marker for: ' + TargetFile);
@@ -589,8 +561,6 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  ETS2Selected: Boolean;
-  ATSSelected: Boolean;
   ETS2X64Source: String;
   ETS2X86Source: String;
   ATSX64Source: String;
@@ -606,21 +576,19 @@ begin
   begin
     if not CheckGamesAreClosed(GameError) then
       RaiseException(GameError + ' No game plugin DLL was replaced.');
-    ETS2Selected := WizardIsTaskSelected('ets2plugin');
-    ATSSelected := WizardIsTaskSelected('atsplugin');
     ETS2X64Source := ExpandConstant('{app}\plugin\win_x64\' + PluginDllName);
     ETS2X86Source := ExpandConstant('{app}\plugin\win_x86\' + PluginDllName);
     ATSX64Source := ETS2X64Source;
     ATSX86Source := ETS2X86Source;
     SkippedPluginTargets := '';
     InstallPlugin(ETS2X64Source, ETS2X64PluginPath, ETS2X64Directory,
-      ETS2Selected and ShouldInstallETS2X64, SkippedPluginTargets);
+      ShouldInstallETS2X64, SkippedPluginTargets);
     InstallPlugin(ETS2X86Source, ETS2X86PluginPath, ETS2X86Directory,
-      ETS2Selected and ShouldInstallETS2X86, SkippedPluginTargets);
+      ShouldInstallETS2X86, SkippedPluginTargets);
     InstallPlugin(ATSX64Source, ATSX64PluginPath, ATSX64Directory,
-      ATSSelected and ShouldInstallATSX64, SkippedPluginTargets);
+      ShouldInstallATSX64, SkippedPluginTargets);
     InstallPlugin(ATSX86Source, ATSX86PluginPath, ATSX86Directory,
-      ATSSelected and ShouldInstallATSX86, SkippedPluginTargets);
+      ShouldInstallATSX86, SkippedPluginTargets);
     RemoveObsoleteManagedFiles;
     if ETS2RootPath = '' then
     begin

@@ -60,6 +60,20 @@ int main()
         ok = check(history.activeJob() && history.activeJob()->id == "NLSI-0001",
                    "first active job uses NLSI-0001") && ok;
         ok = check(history.completedJobs().empty(), "active job is excluded from completed history") && ok;
+
+        auto partial = activeSnapshot();
+        partial.values["job.source_city"].available = false;
+        partial.values["job.source_city"].value.clear();
+        partial.values["job.destination_city"].value.clear();
+        ok = check(history.processSnapshot(partial, start.addSecs(1)) &&
+                   history.activeJob() && history.activeJob()->id == "NLSI-0001" &&
+                   history.activeJob()->snapshot.values.at("job.source_city").value == "Berlin" &&
+                   history.activeJob()->snapshot.values.at("job.destination_city").value == "Paris",
+                   "transiently missing or empty job fields do not replace a persisted active route") && ok;
+        partial.values.erase("job.status");
+        ok = check(!history.processSnapshot(partial, start.addSecs(2)) &&
+                   history.activeJob() && history.activeJob()->id == "NLSI-0001",
+                   "a transiently missing status does not finalize or replace an active job") && ok;
     }
 
     {
@@ -120,6 +134,19 @@ int main()
         ok = check(!history.processSnapshot(disconnected, finish.addSecs(600)),
                    "missing or disconnected status does not finalize an active job") && ok;
         ok = check(history.completedJobs().size() == 2, "interrupted active job remains out of completed history") && ok;
+    }
+
+    {
+        const QString routeDirectory = QDir(temporary.path()).filePath("route-change-jobs");
+        nlsi::JobHistory history(routeDirectory);
+        auto first = activeSnapshot();
+        ok = check(history.processSnapshot(first, start), "route-change test starts an active job") && ok;
+        auto changedRoute = first;
+        changedRoute.values["job.source_city"].value = "Prague";
+        ok = check(history.processSnapshot(changedRoute, start.addSecs(1)) &&
+                   history.activeJob() && history.activeJob()->id == "NLSI-0002" &&
+                   history.activeJob()->snapshot.values.at("job.source_city").value == "Prague",
+                   "a valid changed job route still starts a new job record") && ok;
     }
 
     if (!ok)

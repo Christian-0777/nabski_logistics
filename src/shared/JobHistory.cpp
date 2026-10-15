@@ -206,7 +206,8 @@ bool JobHistory::processSnapshot(const TelemetrySnapshot& snapshot, const QDateT
         const auto hasJob = [](const TelemetrySnapshot& value)
         {
             const auto cargo = value.values.find("job.cargo");
-            return cargo != value.values.end() && cargo->second.available && !cargo->second.value.empty();
+            return cargo != value.values.end() && cargo->second.available &&
+                !trimString(cargo->second.value).empty();
         };
         if (!hasJob(snapshot))
         {
@@ -219,13 +220,27 @@ bool JobHistory::processSnapshot(const TelemetrySnapshot& snapshot, const QDateT
             const auto fieldValue = [](const TelemetrySnapshot& value, const std::string& key)
             {
                 const auto it = value.values.find(key);
-                return it == value.values.end() || !it->second.available ? std::string() : it->second.value;
+                return it == value.values.end() || !it->second.available
+                    ? std::string()
+                    : trimString(it->second.value);
             };
+            const auto incomingIdentityChanged = [&](const std::string& key)
+            {
+                const std::string incomingValue = fieldValue(snapshot, key);
+                const std::string currentValue = fieldValue(active_->snapshot, key);
+                return !incomingValue.empty() && !currentValue.empty() &&
+                    incomingValue != currentValue;
+            };
+            const std::string currentGameId = trimString(active_->snapshot.gameId);
+            const std::string incomingGameId = trimString(snapshot.gameId);
             const bool differs =
-                active_->snapshot.gameId != snapshot.gameId ||
+                (!currentGameId.empty() && !incomingGameId.empty() &&
+                 currentGameId != incomingGameId) ||
                 fieldValue(active_->snapshot, "job.cargo") != fieldValue(snapshot, "job.cargo") ||
-                fieldValue(active_->snapshot, "job.source_city") != fieldValue(snapshot, "job.source_city") ||
-                fieldValue(active_->snapshot, "job.destination_city") != fieldValue(snapshot, "job.destination_city");
+                incomingIdentityChanged("job.source_city") ||
+                incomingIdentityChanged("job.source_company") ||
+                incomingIdentityChanged("job.destination_city") ||
+                incomingIdentityChanged("job.destination_company");
             if (differs)
             {
                 active_.reset();
@@ -250,7 +265,7 @@ bool JobHistory::processSnapshot(const TelemetrySnapshot& snapshot, const QDateT
         const QDateTime startedAt = active_->startedAt;
         for (const auto& field : snapshot.values)
         {
-            if (field.second.available)
+            if (field.second.available && !trimString(field.second.value).empty())
             {
                 active_->snapshot.values[field.first] = field.second;
             }
@@ -288,7 +303,7 @@ bool JobHistory::processSnapshot(const TelemetrySnapshot& snapshot, const QDateT
         {
             for (const auto& field : snapshot.values)
             {
-                if (field.second.available)
+                if (field.second.available && !trimString(field.second.value).empty())
                 {
                     active_->snapshot.values[field.first] = field.second;
                 }

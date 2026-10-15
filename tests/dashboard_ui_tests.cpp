@@ -21,9 +21,9 @@ int main(int argc, char** argv)
 {
     QApplication app(argc, argv);
     nlsi::DashboardMainWindow window;
-    if (window.windowTitle() != "NLSI Exclusive Logbook 1.7.2 Beta")
+    if (window.windowTitle() != "NLSI Exclusive Logbook 1.7.3 Beta")
     {
-        std::cerr << "The dashboard window title does not report v1.7.2 Beta.\n";
+        std::cerr << "The dashboard window title does not report v1.7.3 Beta.\n";
         return 1;
     }
     if (window.minimumSize() != QSize(900, 600))
@@ -192,13 +192,23 @@ int main(int argc, char** argv)
         fuelValue->styleSheet().contains("#C62828") ||
         rpmGearValue->text() != "1171.96 RPM / 3" ||
         throttleValue->text() != "50.00% - A" ||
-        brakeValue->text() != "10.00%" ||
+        brakeValue->text() != "10.00% - A" ||
         cruiseValue->text() != "90.00 KM/H - A" ||
-        retarderValue->text() != "2 LEVEL" ||
+        retarderValue->text() != "2 LEVEL - A" ||
         !arrivalValue->text().startsWith("00:01:00 - "))
     {
         std::cerr << "Dashboard numeric formatting or active driving indicators are incorrect.\n";
         return 1;
+    }
+    for (QLabel* label : scroll->widget()->findChildren<QLabel*>())
+    {
+        if ((label->objectName() == "telemetryLabel" ||
+             label->objectName() == "telemetryValue") &&
+            (label->text() != label->text().toUpper() || !label->font().bold()))
+        {
+            std::cerr << "Dashboard field labels or values are not uppercase and bold.\n";
+            return 1;
+        }
     }
 
     drivingSnapshot.values["truck.fuel.amount"].value = "20";
@@ -279,6 +289,31 @@ int main(int argc, char** argv)
         !toValue || toValue->text() != "NBFC - HAMBURG")
     {
         std::cerr << "The active job ID, status, or origin/destination formatting is incorrect.\n";
+        return 1;
+    }
+    const QString persistentJobId = jobIdValue->text();
+    auto transientJob = activeJob;
+    transientJob.values["job.status"].available = false;
+    transientJob.values["job.status"].value.clear();
+    transientJob.values["job.source_company"].available = false;
+    transientJob.values["job.source_company"].value.clear();
+    transientJob.values["job.source_city"].available = false;
+    transientJob.values["job.source_city"].value.clear();
+    transientJob.values["job.destination_company"].available = false;
+    transientJob.values["job.destination_company"].value.clear();
+    transientJob.values["job.destination_city"].available = false;
+    transientJob.values["job.destination_city"].value.clear();
+    historyWindow.applySnapshot(transientJob);
+    if (jobIdValue->text() != persistentJobId)
+    {
+        std::cerr << "A transiently unavailable job field changed the persistent job ID.\n";
+        return 1;
+    }
+    if (statusValue->text() != "ACTIVE" ||
+        fromValue->text() != "TRAMER - BERLIN" ||
+        toValue->text() != "NBFC - HAMBURG")
+    {
+        std::cerr << "Transiently unavailable status or route fields overwrote valid displayed values.\n";
         return 1;
     }
     historyWindow.applySnapshot(activeJob);
@@ -373,11 +408,22 @@ int main(int argc, char** argv)
         {
             const auto labels = dialog->findChildren<QLabel*>();
             bool hasFuelCost = false;
+            bool fuelCostUnavailable = false;
             bool hasStatus = false;
             bool fieldValuesFormatted = true;
             for (QLabel* label : labels)
             {
-                hasFuelCost = hasFuelCost || label->text() == "FUEL COST";
+                if (label->objectName() == "telemetryLabel" &&
+                    (label->text() != label->text().toUpper() || !label->font().bold()))
+                {
+                    fieldValuesFormatted = false;
+                }
+                if (label->text() == "FUEL COST")
+                {
+                    hasFuelCost = true;
+                    auto* value = label->parentWidget()->findChild<QLabel*>("telemetryValue");
+                    fuelCostUnavailable = value && value->text() == QString::fromUtf8("—");
+                }
                 hasStatus = hasStatus || label->text() == "JOB STATUS";
                 if (label->objectName() == "telemetryValue" &&
                     (label->text() != label->text().toUpper() || !label->font().bold()))
@@ -385,7 +431,8 @@ int main(int argc, char** argv)
                     fieldValuesFormatted = false;
                 }
             }
-            detailDialogShowedFields = hasFuelCost && hasStatus && fieldValuesFormatted;
+            detailDialogShowedFields = hasFuelCost && fuelCostUnavailable &&
+                hasStatus && fieldValuesFormatted;
             dialog->accept();
         }
     });

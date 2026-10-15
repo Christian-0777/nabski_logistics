@@ -51,6 +51,7 @@ private:
     QPushButton* dashboardNavButton_ = nullptr;
     QPushButton* completedJobsNavButton_ = nullptr;
     QLocalServer* localServer_ = nullptr;
+    QLocalSocket* selectedTelemetrySocket_ = nullptr;
     QTimer* telemetryTimer_ = nullptr;
     QTimer* processTimer_ = nullptr;
     bool processScanInFlight_ = false;

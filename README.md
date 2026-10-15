@@ -1,30 +1,28 @@
-> [!IMPORTANT]  
-> **BEFORE INSTALLING THE REBUILT VERSION: COMPLETELY UNINSTALL YOUR CURRENT NLSI EXCLUSIVE LOGBOOK INSTALLATION FIRST.** Close the application and both ETS2/ATS, then uninstall NLSI Exclusive Logbook from Windows **Settings → Apps → Installed apps** (or **Apps & features**). Do not install the rebuilt version over the old installation. Back up any local logs, job history, or records you need before uninstalling; user-data preservation can vary by version. After uninstalling, restart Windows if files remain locked, then run the new installer. See the [rebuild and reinstall guide](#rebuild-and-reinstall-guide) below.
->
-> **Why a rebuild?** Repeated crashes when opening the game have made continued patch-by-patch debugging unreliable and costly for a project with limited development resources. The rebuild is intended to establish a cleaner baseline; it is not a guarantee that every crash is already fixed.
-
 # NLSI Exclusive Logbook
 
 NLSI Exclusive Logbook is a native Windows desktop telemetry dashboard for **Euro Truck Simulator 2 (ETS2)** and **American Truck Simulator (ATS)**. The application is developed in C++17 with Qt Widgets and interfaces with the official SCS Telemetry SDK (version 1.15) to display real-time vehicle, driving, navigation, and job metrics.
 
-> **Project Status:** Beta / Active Development (current release: `v1.7.1 Beta`). Features, telemetry mappings, and live gameplay behavior may evolve between releases. Unverified gameplay scenarios or unconfirmed SDK channels are never assumed or fabricated.
+> **Project Status:** Beta / Active Development (current release: `v1.7.3 Beta`). Features, telemetry mappings, and live gameplay behavior may evolve between releases. Unverified gameplay scenarios or unconfirmed SDK channels are never assumed or fabricated.
 
 ---
 
-## Rebuild and Reinstall Guide
+## Install or Update
 
-The rebuilt application is intended to replace the current installation rather than install over it.
+For v1.7.3, install over the existing version without uninstalling; the
+installer updates the application and automatically replaces eligible
+NLSI-managed plugin DLLs. See the
+[current installation guide](docs/INSTALLATION-v1.7.3-beta.md).
 
 1. **Back up records you want to keep.** Copy any important logs, job/session history, exports, and configuration from the existing installation or its user-data directory. The usual per-user data location is `%LOCALAPPDATA%\NLSI\Exclusive Logbook`; verify what your installed build actually uses before removing anything.
 2. **Close the application and games.** Exit NLSI Exclusive Logbook. Close ETS2 and ATS completely and check Task Manager for any remaining application/game processes.
-3. **Uninstall the current version.** Open Windows Settings → Apps → Installed apps (or Apps & features), select NLSI Exclusive Logbook, and choose Uninstall. Do not merely overwrite the old application folder.
-4. **Confirm the old application is removed.** If the uninstaller reports a locked file, restart Windows and finish removal before continuing. Do not manually delete unrelated game files or third-party telemetry plugins.
-5. **Install the rebuilt version.** Run the new version's installer and follow its prompts. Grant administrator permission if Windows requests it for protected installation or game plugin folders.
-6. **Verify game plugin deployment.** If the installer offers ETS2/ATS plugin installation, verify the detected game paths and architecture. Only NLSI-managed plugin files should be replaced; do not remove or modify third-party plugins.
+3. **Update in place.** Run the v1.7.3 installer over the existing application. Manual uninstall is not required.
+4. **Close games before setup.** If a game DLL is locked, close the game or other process using it and retry. Do not manually delete unrelated game files or third-party telemetry plugins.
+5. **Install the update.** Grant administrator permission if Windows requests it for protected application or game plugin folders.
+6. **Verify plugin deployment.** The installer automatically deploys the matching x64/x86 DLLs to detected game directories. Only unchanged NLSI-managed plugin files are replaced.
 7. **Test before relying on it.** Launch NLSI first, then start one game. Confirm process detection and telemetry connection, try a short session, and inspect the application/game logs if it crashes. Test the other game separately.
-8. **Restore records if needed.** Restore only backed-up user records/configuration that the rebuilt version explicitly supports. Do not overwrite new configuration or copy old program binaries/DLLs into the rebuilt installation.
+8. **Keep user records.** Job history and the job-ID sequence remain in the user's application-data directory during an in-place update.
 
-**Important:** The rebuild decision follows repeated crashes during game launch and the limited time, resources, and AI-assistance usage available for repeated debugging. The new baseline still requires testing. Until a specific release has passed live ETS2 and ATS checks, treat it as Beta and do not assume the crash is resolved.
+**Important:** This release remains Beta. Until ETS2 and ATS gameplay scenarios have been checked on your installation, treat live-game behavior as unverified.
 
 ---
 
@@ -37,6 +35,7 @@ The rebuilt application is intended to replace the current installation rather t
 - **Local Inter-Process Communication (IPC):** Communicates securely between game plugin and dashboard over a local Windows named pipe (`\\.\pipe\nlsi_scs_telemetry`) via `QLocalServer`/`QLocalSocket`.
 - **Explicit Unavailable States:** Unsupported or missing telemetry channels are rendered as explicit em dashes (`—`) rather than defaulting to zero or fabricating inferred values.
 - **Fuel Warning & Precision:** RPM and fuel are formatted to two decimal places, with visual warning highlights when fuel drops to or below 20% of tank capacity.
+- **Fuel Cost Availability:** Fuel cost stays unavailable until telemetry provides a reliable refueling price and quantity; refueled liters and total fuel consumed remain separate metrics.
 - **Navigation Advisor ETA Conversion:** Converts SDK navigation advisor seconds to real-time duration (using a 15:1 game-to-real-time scale) with local arrival clock and day rollover estimation.
 - **No Remote Dependencies:** Completely self-contained local operation; requires no external web services, background cloud daemons, or database servers for telemetry monitoring.
 - **Persistent Job History:** Application-generated job IDs and confirmed delivered or cancelled jobs are stored as atomic local `.nlsi` records. Active jobs recover across dashboard restarts and remain excluded from completed history.
@@ -139,10 +138,10 @@ cmake --build build-x86 --config Release
 
 ## Installation & Deployment
 
-1. Download the latest installer (`NLSI-Exclusive-Logbook-v1.7.1-beta-Setup.exe`) from the [GitHub Releases](https://github.com/Christian-0777/nlsi_telemetry/releases) page.
+1. Download the v1.7.3 Beta installer (`NLSI-Exclusive-Logbook-v1.7.3-beta-Setup.exe`) from the [GitHub Releases](https://github.com/Christian-0777/nlsi_telemetry/releases) page.
 2. Run the installer and select your installation directory (defaults to `C:\Program Files\Nabski Logistics Solutions Inc`).
 3. The installer scans known Steam library configurations (`libraryfolders.vdf`) to detect ETS2 and ATS installations.
-4. If enabled during setup, the installer deploys `nlsi_scs_plugin.dll` to the architecture-specific `bin\win_x64\plugins` and `bin\win_x86\plugins` game folders.
+4. The installer automatically deploys `nlsi_scs_plugin.dll` to detected architecture-specific `bin\win_x64\plugins` and `bin\win_x86\plugins` game folders.
 5. Unmanaged or user-modified third-party plugins are never overwritten. Existing NLSI-managed plugins are safely backed up before replacement.
 6. If ETS2 or ATS is running, Setup blocks before replacing files and asks you to close the game; it never terminates either game. Job records and the ID sequence remain under the user's application-data directory and are preserved by updates and uninstall.
 

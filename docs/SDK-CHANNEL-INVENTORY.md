@@ -91,6 +91,10 @@ channel callbacks. No derived values are displayed:
 - Job progress
 - Fuel range
 - Average fuel consumption
+- Fuel cost: the consumed SDK integration provides refueled liters and fuel
+  consumption, but no actual price paid per refueling or reliable fuel-price
+  source. A monetary value requires a per-refuel cost or price-per-liter source
+  with currency and quantity; liters are never treated as money.
 - GPS coordinates converted to real-world map coordinates
 - Inferred delivery status
 
