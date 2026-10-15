@@ -16,7 +16,8 @@ jobs:
     steps:
       - name: Announce GitHub Release on Discord
         env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
           RELEASE_NAME: ${{ github.event.release.name }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           RELEASE_URL: ${{ github.event.release.html_url }}
@@ -31,13 +32,14 @@ jobs:
           import urllib.error
           import urllib.request
 
-          webhook = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
+          token = os.environ.get("DISCORD_BOT_TOKEN", "").strip()
+          channel_id = os.environ.get("DISCORD_CHANNEL_ID", "").strip()
 
-          if not webhook:
-              sys.exit(
-                  "DISCORD_WEBHOOK_URL is missing. "
-                  "Configure it in GitHub Actions repository secrets."
-              )
+          if not token:
+              sys.exit("Missing DISCORD_BOT_TOKEN repository secret.")
+
+          if not channel_id.isdigit():
+              sys.exit("DISCORD_CHANNEL_ID must be a numeric channel ID.")
 
           name = os.environ.get("RELEASE_NAME") or os.environ["RELEASE_TAG"]
           tag = os.environ["RELEASE_TAG"]
@@ -46,18 +48,14 @@ jobs:
           repo = os.environ["REPOSITORY"]
           prerelease = os.environ.get("IS_PRERELEASE", "").lower() == "true"
 
-          # Discord embed descriptions have a 4096-character limit.
-          # Leave room for a truncation notice.
+          # Stay within Discord embed description limits.
           if len(body) > 3500:
-              body = body[:3460] + "\n\n… Release notes truncated. See the full release."
+              body = body[:3460] + "\n\n… Read the complete notes on GitHub."
 
-          title_prefix = "🧪 Beta Release" if prerelease else "🚀 New Release"
-          title = f"{title_prefix}: {name}"
-          if len(title) > 256:
-              title = title[:253] + "..."
+          title = f"{'🧪 Beta Release' if prerelease else '🚀 New Release'}: {name}"
+          title = title[:256]
 
           payload = {
-              "username": "NLSI Release Bot",
               "allowed_mentions": {"parse": []},
               "embeds": [{
                   "title": title,
@@ -87,13 +85,19 @@ jobs:
               }]
           }
 
+          endpoint = (
+              f"https://discord.com/api/v10/channels/"
+              f"{channel_id}/messages"
+          )
+
           request = urllib.request.Request(
-              webhook,
+              endpoint,
               data=json.dumps(payload).encode("utf-8"),
               headers={
+                  "Authorization": f"Bot {token}",
                   "Content-Type": "application/json",
                   "User-Agent": (
-                      "DiscordBot "
+                      "NLSIReleaseBot "
                       "(https://github.com/Christian-0777/nlsi_telemetry, 1.0)"
                   )
               },
@@ -102,54 +106,52 @@ jobs:
 
           try:
               with urllib.request.urlopen(request, timeout=20) as response:
-                  if response.status not in (200, 204):
+                  if response.status not in (200, 201):
                       sys.exit(
-                          f"Discord webhook returned unexpected HTTP "
-                          f"{response.status}."
+                          f"Unexpected Discord API status: {response.status}"
                       )
 
-              print(f"Release announcement sent successfully for {tag}.")
+              print(f"Discord announcement sent for release {tag}.")
 
           except urllib.error.HTTPError as error:
-              # Do not print the request URL: it contains the webhook secret.
-              try:
-                  response_body = error.read(1000).decode(
-                      "utf-8", errors="replace"
-                  )
-              except Exception:
-                  response_body = ""
-
+              # Never print the token or the Authorization header.
               print(
-                  f"Discord rejected the notification: HTTP {error.code}.",
+                  f"Discord API request failed: HTTP {error.code}.",
                   file=sys.stderr
               )
 
-              if error.code == 403 and "1010" in response_body:
+              if error.code == 401:
                   print(
-                      "Discord edge protection blocked the request (error 1010). "
-                      "Verify the webhook is current, then try a newly created "
-                      "webhook. If the problem persists, use a Discord bot API "
-                      "integration or contact Discord support.",
+                      "The bot token is invalid or has been reset. "
+                      "Update DISCORD_BOT_TOKEN.",
                       file=sys.stderr
                   )
-              elif error.code == 401 or error.code == 404:
+              elif error.code == 403:
                   print(
-                      "Check that DISCORD_WEBHOOK_URL contains the complete, "
-                      "current webhook URL. Recreate the webhook if necessary "
-                      "and update the GitHub secret.",
+                      "The bot lacks permission to post in this channel. "
+                      "Check View Channel, Send Messages, and Embed Links.",
+                      file=sys.stderr
+                  )
+              elif error.code == 404:
+                  print(
+                      "The channel was not found or the bot cannot access it. "
+                      "Check DISCORD_CHANNEL_ID and the bot's server membership.",
                       file=sys.stderr
                   )
               else:
-                  print(
-                      f"Discord response: {response_body or 'No response body.'}",
-                      file=sys.stderr
-                  )
+                  try:
+                      details = error.read(1000).decode(
+                          "utf-8", errors="replace"
+                      )
+                      print(details, file=sys.stderr)
+                  except Exception:
+                      pass
 
               sys.exit(1)
 
           except urllib.error.URLError as error:
               print(
-                  f"Could not connect to Discord: {error.reason}",
+                  f"Could not connect to Discord API: {error.reason}",
                   file=sys.stderr
               )
               sys.exit(1)
