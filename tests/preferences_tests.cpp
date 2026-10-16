@@ -193,10 +193,9 @@ int main(int argc, char** argv)
                    !QFile::exists(profilePath),
                    "missing profile uses safe defaults without creating a file") && ok;
         ok = check(store.loadApiSettings(loadedApi, &error) && error.isEmpty() &&
-                   loadedApi.baseUrl ==
-                       "https://emphasis-shady-creasing.ngrok-free.dev/xtian_tools/nlsi-api" &&
+                   loadedApi.baseUrl.isEmpty() &&
                    loadedApi.apiKey.isEmpty() && !QFile::exists(profilePath),
-                   "missing API settings use the configured URL without creating a file") && ok;
+                   "missing API settings do not invent a URL or key and do not create a file") && ok;
 
         nlsi::UserPreferences saved;
         saved.speed = nlsi::SpeedUnit::MilesPerHour;
@@ -204,6 +203,30 @@ int main(int argc, char** argv)
         saved.currency = nlsi::CurrencyUnit::UsDollar;
         saved.distance = nlsi::DistanceUnit::Miles;
 #ifdef Q_OS_WIN
+        const auto checkApiConfiguration = [&](const QString& fileName,
+                                               const QJsonObject& apiObject,
+                                               const QString& expectedUrl,
+                                               const QString& expectedKey)
+        {
+            QJsonObject fixture;
+            fixture.insert("api", apiObject);
+            const QString fixturePath = temporaryDirectory.filePath(fileName);
+            nlsi::ApiSettings fixtureSettings;
+            QString fixtureError;
+            return writeEncryptedProfile(fixturePath, fixture) &&
+                nlsi::ProfileStore(fixturePath).loadApiSettings(fixtureSettings, &fixtureError) &&
+                fixtureError.isEmpty() && fixtureSettings.baseUrl == expectedUrl &&
+                fixtureSettings.apiKey == expectedKey;
+        };
+        ok = check(checkApiConfiguration("missing-url.nlsi",
+                   QJsonObject{{"key", "AbC123xYz789"}}, QString(), "AbC123xYz789"),
+                   "an encrypted key without an API URL remains unconfigured") && ok;
+        ok = check(checkApiConfiguration("missing-key.nlsi",
+                   QJsonObject{{"base_url", "https://example.com/api"}},
+                   "https://example.com/api", QString()),
+                   "an encrypted API URL without a key remains unconfigured") && ok;
+        ok = check(checkApiConfiguration("missing-both.nlsi", QJsonObject(), QString(), QString()),
+                   "an encrypted empty API configuration remains unconfigured") && ok;
         ok = check(store.save(saved, &error), "all preferences save together to encrypted profile") && ok;
         QFile protectedProfile(profilePath);
         ok = check(protectedProfile.open(QIODevice::ReadOnly) &&

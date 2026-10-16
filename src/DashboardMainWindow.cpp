@@ -9,11 +9,13 @@
 #include <limits>
 
 #include <QCoreApplication>
+#include <QApplication>
 #include <QDate>
 #include <QDateTime>
 #include <QDialog>
 #include <QDir>
 #include <QComboBox>
+#include <QClipboard>
 #include <QFileInfo>
 #include <QFileDialog>
 #include <QFutureWatcher>
@@ -36,6 +38,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QPixmap>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QMessageBox>
 #include <QSizePolicy>
@@ -60,6 +63,60 @@ namespace nlsi {
 namespace {
 
 const QString unavailable = QString::fromUtf8("—");
+const QString profileUnavailable = "Not connected";
+
+QString rankForDistance(double distanceKm)
+{
+    if (distanceKm >= 1000000.0) return "Mythic";
+    if (distanceKm >= 500000.0) return "Ultimate";
+    if (distanceKm >= 250000.0) return "Master";
+    if (distanceKm >= 100000.0) return "Legend";
+    if (distanceKm >= 50000.0) return "Expert";
+    if (distanceKm >= 25000.0) return "Veteran";
+    if (distanceKm >= 15000.0) return "Elder";
+    if (distanceKm >= 5000.0) return "Driver";
+    return "Trainee";
+}
+
+double rankLowerThreshold(const QString& rank)
+{
+    if (rank == "Driver") return 5000.0;
+    if (rank == "Elder") return 15000.0;
+    if (rank == "Veteran") return 25000.0;
+    if (rank == "Expert") return 50000.0;
+    if (rank == "Legend") return 100000.0;
+    if (rank == "Master") return 250000.0;
+    if (rank == "Ultimate") return 500000.0;
+    if (rank == "Mythic") return 1000000.0;
+    return 0.0;
+}
+
+double nextRankThreshold(const QString& rank)
+{
+    if (rank == "Trainee") return 5000.0;
+    if (rank == "Driver") return 15000.0;
+    if (rank == "Elder") return 25000.0;
+    if (rank == "Veteran") return 50000.0;
+    if (rank == "Expert") return 100000.0;
+    if (rank == "Legend") return 250000.0;
+    if (rank == "Master") return 500000.0;
+    if (rank == "Ultimate") return 1000000.0;
+    return 0.0;
+}
+
+QString maskedEmail(const QString& email)
+{
+    const int separator = email.indexOf('@');
+    if (separator <= 0)
+    {
+        return email;
+    }
+    const QString localPart = email.left(separator);
+    const QString visiblePrefix = localPart.left(2);
+    const int maskLength = (std::max)(3,
+        static_cast<int>(localPart.size()) - static_cast<int>(visiblePrefix.size()));
+    return visiblePrefix + QString(maskLength, '*') + email.mid(separator);
+}
 
 QString canonicalValueText(const QString& text)
 {
@@ -588,7 +645,7 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
     const bool profileLoaded = profileStore_.load(preferences_, &profileError);
     const bool apiSettingsLoaded = profileStore_.loadApiSettings(apiSettings_, &apiSettingsLoadError_);
     networkManager_ = new QNetworkAccessManager(this);
-    setWindowTitle("NLSI Exclusive Logbook 1.7.9 Beta");
+    setWindowTitle("NLSI Exclusive Logbook 1.8.0 Beta");
     const QString iconPath = QFileInfo(QDir::currentPath(), "resources/nlsi.ico").exists()
         ? QDir::currentPath() + "/resources/nlsi.ico"
         : QCoreApplication::applicationDirPath() + "/resources/nlsi.ico";
@@ -622,6 +679,22 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
         "QLabel#headerMode { font: 700 10px 'Segoe UI'; color: #A15E7D; }"
         "QLabel#headerMeta { font: 700 10px 'Segoe UI'; color: #665B62; }"
         "QLabel#processState, QLabel#connectionState { font: 700 10px 'Segoe UI'; color: #665B62; }"
+        "QLabel#profileAvatar { font: 700 24px 'Segoe UI'; color: #FFFFFF; background: #D94F8C; border-radius: 12px; }"
+        "QLabel#profileHeaderName { font: 700 17px 'Segoe UI'; color: #28232A; }"
+        "QLabel#profileHeaderUsername { font: 400 12px 'Segoe UI'; color: #665B62; }"
+        "QLabel#profileHeaderStatus, QLabel#profileHeaderRole { font: 700 10px 'Segoe UI'; border-radius: 9px; padding: 3px 9px; }"
+        "QLabel#profileHeaderStatus { color: #1C8059; background: #E4F6EC; }"
+        "QLabel#profileHeaderRole { color: #B03C73; background: #FDEBF3; }"
+        "QLabel#profileDetailLabel { font: 400 12px 'Segoe UI'; color: #665B62; }"
+        "QLabel#profileDetailValue { font: 400 12px 'Segoe UI'; color: #28232A; }"
+        "QPushButton[profileAction=\"true\"] { font: 400 11px 'Segoe UI'; color: #C83E7B; background: #FFFFFF; border: 1px solid #FFD1E6; border-radius: 5px; padding: 3px 10px; }"
+        "QPushButton[profileAction=\"true\"]:hover { background: #FFF7FA; }"
+        "QPushButton[profileAction=\"true\"]:disabled { color: #AFA4AA; border-color: #F0E7EB; }"
+        "QProgressBar#profileRankProgress { height: 11px; color: #665B62; background: #FCEAF2; border: none; border-radius: 5px; text-align: center; font: 400 9px 'Segoe UI'; }"
+        "QProgressBar#profileRankProgress::chunk { background: #D94F8C; border-radius: 5px; }"
+        "QLabel#profileRankMeta { font: 400 10px 'Segoe UI'; color: #A15E7D; }"
+        "QLabel#profileSyncTitle { font: 700 12px 'Segoe UI'; color: #8A5A00; }"
+        "QLabel#profileStatus { font: 400 10px 'Segoe UI'; color: #8A5A00; }"
         "QLabel#telemetryLabel { font: 700 %4px 'Segoe UI'; color: #A15E7D; letter-spacing: 0.35px; padding-top: 2px; }"
         "QLabel#telemetryValue { font: 700 %4px 'Segoe UI'; color: #28232A; min-height: 18px; background: #FFFFFF; }"
         "QLabel#gameApiVersionLabel { font: 700 %4px 'Segoe UI'; color: #A15E7D; }"
@@ -664,7 +737,7 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
     statusBar->setStyleSheet(
         "QStatusBar { background: #FFF7FA; border-top: 1px solid #FFD1E6; color: #665B62; font: 700 10px 'Segoe UI'; padding: 0 8px; }"
     );
-    statusBar->showMessage("LOCAL TELEMETRY • VERSION 1.7.9 BETA");
+    statusBar->showMessage("LOCAL TELEMETRY • VERSION 1.8.0 BETA");
     setStatusBar(statusBar);
     if (!jobHistory_.errorString().isEmpty())
     {
@@ -679,7 +752,8 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
         statusBar->showMessage(uppercaseDisplayText(
             "API SETTINGS WARNING: " + apiSettingsLoadError_));
     }
-    else if (!apiSettings_.apiKey.isEmpty())
+    else if (!apiSettings_.baseUrl.trimmed().isEmpty() &&
+             !apiSettings_.apiKey.trimmed().isEmpty())
     {
         QString identityError;
         if (!profileStore_.saveApiSettings(apiSettings_, &identityError))
@@ -690,6 +764,20 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
         }
     }
     refreshCompletedJobs();
+    updateApiConnectionState(false,
+        "Not connected. The API must be reachable and the configured driver key must authenticate.");
+    const bool apiConfigured = !apiSettings_.baseUrl.trimmed().isEmpty() &&
+        !apiSettings_.apiKey.trimmed().isEmpty();
+    if (!apiConfigured)
+    {
+        setProfileUnavailable(apiSettingsLoadError_.isEmpty()
+            ? "Configure your API URL and key in Settings to connect."
+            : "Saved API settings could not be loaded. Check the encrypted profile.");
+    }
+    else
+    {
+        profileStatus_->setText("Waiting for the configured account to authenticate.");
+    }
 
     startTelemetryListener();
 
@@ -710,28 +798,41 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
     jobSyncTimer_->setInterval(syncRetryDelayMs_);
     connect(jobSyncTimer_, &QTimer::timeout, this, [this]()
     {
-        if (syncRequestInFlight_ || profileRequestInFlight_ ||
-            apiSettings_.apiKey.trimmed().isEmpty())
+        if (!apiOnline_ || syncRequestInFlight_ || profileRequestInFlight_ ||
+            connectionRequestInFlight_)
         {
             return;
         }
         if (authenticatedDriverId_ > 0)
         {
             synchronizeAccountJobs(authenticatedDriverId_);
-            return;
-        }
-        if (++unauthenticatedSyncTicks_ >= 5)
-        {
-            unauthenticatedSyncTicks_ = 0;
-            requestAccountProfile(false);
         }
     });
     jobSyncTimer_->start();
 
-    QTimer::singleShot(0, this, &DashboardMainWindow::requestCurrencyExchangeRate);
-    if (apiSettingsLoaded && apiSettingsLoadError_.isEmpty() && !apiSettings_.apiKey.isEmpty())
+    connectionCheckTimer_ = new QTimer(this);
+    connectionCheckTimer_->setObjectName("profileConnectionCheckTimer");
+    connectionCheckTimer_->setInterval(connectionRetryDelayMs_);
+    connect(connectionCheckTimer_, &QTimer::timeout, this, [this]()
     {
-        QTimer::singleShot(0, this, &DashboardMainWindow::refreshAccountProfile);
+        if (apiSettings_.baseUrl.trimmed().isEmpty() ||
+            apiSettings_.apiKey.trimmed().isEmpty() ||
+            profileRequestInFlight_ || connectionRequestInFlight_ || syncRequestInFlight_)
+        {
+            return;
+        }
+        requestAccountProfile(false, false, true);
+    });
+    connectionCheckTimer_->start();
+
+    QTimer::singleShot(0, this, &DashboardMainWindow::requestCurrencyExchangeRate);
+    if (apiSettingsLoaded && apiSettingsLoadError_.isEmpty() &&
+        !apiSettings_.baseUrl.trimmed().isEmpty() && !apiSettings_.apiKey.trimmed().isEmpty())
+    {
+        QTimer::singleShot(0, this, [this]()
+        {
+            requestAccountProfile(false, true, true);
+        });
     }
 }
 
@@ -825,7 +926,7 @@ void DashboardMainWindow::buildSidebar()
     footerDivider->setFrameShadow(QFrame::Plain);
     footerDivider->setStyleSheet("QFrame { color: #FFD1E6; background: #FFD1E6; max-height: 1px; }");
     layout->addWidget(footerDivider);
-    auto* version = new QLabel("1.7.9 BETA", sidebar_);
+    auto* version = new QLabel("1.8.0 BETA", sidebar_);
     version->setObjectName("sidebarSubtitle");
     layout->addWidget(version);
 }
@@ -1096,6 +1197,7 @@ void DashboardMainWindow::buildContent()
     apiUrlInput_ = new QLineEdit(apiSettings_.baseUrl, configPanel);
     apiUrlInput_->setObjectName("apiUrlInput");
     apiUrlInput_->setMinimumWidth(320);
+    apiUrlInput_->setPlaceholderText("Enter your HTTPS API URL");
     configForm->addRow("API LINK", apiUrlInput_);
     apiKeyInput_ = new QLineEdit(apiSettings_.apiKey, configPanel);
     apiKeyInput_->setObjectName("apiKeyInput");
@@ -1105,9 +1207,9 @@ void DashboardMainWindow::buildContent()
     apiConfigStatus_ = new QLabel(
         !apiSettingsLoadError_.isEmpty()
             ? "Saved API settings could not be loaded. Check the encrypted profile."
-            : apiSettings_.apiKey.isEmpty()
-                ? "Save your API link and key before connecting."
-                : "Saved API settings are ready to test.",
+            : apiSettings_.baseUrl.trimmed().isEmpty() || apiSettings_.apiKey.trimmed().isEmpty()
+                ? "Configure both your API URL and driver API key before connecting."
+                : "Saved API settings are ready to authenticate.",
         configPanel);
     apiConfigStatus_->setObjectName("apiConfigStatus");
     apiConfigStatus_->setWordWrap(true);
@@ -1129,48 +1231,196 @@ void DashboardMainWindow::buildContent()
     auto* profilePage = new QWidget(settingsTabs_);
     auto* profileLayout = new QVBoxLayout(profilePage);
     profileLayout->setContentsMargins(0, 0, 0, 0);
-    auto* profilePanel = new QGroupBox("ACCOUNT PROFILE", profilePage);
-    auto* profileForm = new QFormLayout(profilePanel);
-    profileForm->setContentsMargins(14, 16, 14, 12);
-    profileForm->setHorizontalSpacing(18);
-    profileForm->setVerticalSpacing(12);
-    auto makeProfileValue = [profilePanel](const QString& name)
+    auto* profileScroll = new QScrollArea(profilePage);
+    profileScroll->setObjectName("profileScroll");
+    profileScroll->setWidgetResizable(true);
+    profileScroll->setFrameShape(QFrame::NoFrame);
+    profileScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto* profileContent = new QWidget(profileScroll);
+    auto* profileContentLayout = new QVBoxLayout(profileContent);
+    profileContentLayout->setContentsMargins(0, 0, 0, 2);
+    profileContentLayout->setSpacing(8);
+
+    auto* accountCard = new QFrame(profileContent);
+    accountCard->setObjectName("profileHeaderCard");
+    accountCard->setStyleSheet(
+        "QFrame#profileHeaderCard { background: #FFFFFF; border: 1px solid #FFD1E6; border-radius: 9px; }");
+    auto* accountLayout = new QHBoxLayout(accountCard);
+    accountLayout->setContentsMargins(16, 12, 16, 12);
+    accountLayout->setSpacing(14);
+    profileAvatar_ = new QLabel(profileUnavailable, accountCard);
+    profileAvatar_->setObjectName("profileAvatar");
+    profileAvatar_->setFixedSize(62, 62);
+    profileAvatar_->setAlignment(Qt::AlignCenter);
+    profileAvatar_->setWordWrap(true);
+    accountLayout->addWidget(profileAvatar_);
+    auto* accountText = new QVBoxLayout();
+    accountText->setContentsMargins(0, 0, 0, 0);
+    accountText->setSpacing(2);
+    profileHeaderName_ = new QLabel(profileUnavailable, accountCard);
+    profileHeaderName_->setObjectName("profileHeaderName");
+    profileHeaderUsername_ = new QLabel(profileUnavailable, accountCard);
+    profileHeaderUsername_->setObjectName("profileHeaderUsername");
+    auto* accountBadges = new QHBoxLayout();
+    accountBadges->setContentsMargins(0, 2, 0, 0);
+    accountBadges->setSpacing(6);
+    profileHeaderStatus_ = new QLabel(profileUnavailable, accountCard);
+    profileHeaderStatus_->setObjectName("profileHeaderStatus");
+    profileHeaderRole_ = new QLabel(profileUnavailable, accountCard);
+    profileHeaderRole_->setObjectName("profileHeaderRole");
+    accountBadges->addWidget(profileHeaderStatus_);
+    accountBadges->addWidget(profileHeaderRole_);
+    accountBadges->addStretch();
+    accountText->addWidget(profileHeaderName_);
+    accountText->addWidget(profileHeaderUsername_);
+    accountText->addLayout(accountBadges);
+    accountLayout->addLayout(accountText, 1);
+    profileContentLayout->addWidget(accountCard);
+
+    auto* rankCard = new QGroupBox(profileContent);
+    rankCard->setObjectName("profileRankCard");
+    auto* rankLayout = new QVBoxLayout(rankCard);
+    rankLayout->setContentsMargins(12, 12, 12, 10);
+    rankLayout->setSpacing(7);
+    auto* rankHeading = new QHBoxLayout();
+    auto* rankTitle = new QLabel("Driver rank:", rankCard);
+    rankTitle->setObjectName("profileDetailValue");
+    profileRankValue_ = new QLabel(profileUnavailable, rankCard);
+    profileRankValue_->setObjectName("profileRankValue");
+    profileRankValue_->setStyleSheet("font: 700 13px 'Segoe UI';");
+    profileDistanceValue_ = new QLabel(profileUnavailable, rankCard);
+    profileDistanceValue_->setObjectName("profileDistanceValue");
+    profileDistanceValue_->setStyleSheet("font: 700 18px 'Segoe UI';");
+    auto* distanceBlock = new QVBoxLayout();
+    distanceBlock->setContentsMargins(0, 0, 0, 0);
+    distanceBlock->setSpacing(1);
+    auto* distanceLabel = new QLabel("Qualifying distance", rankCard);
+    distanceLabel->setObjectName("profileRankMeta");
+    distanceLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    profileDistanceValue_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    distanceBlock->addWidget(distanceLabel);
+    distanceBlock->addWidget(profileDistanceValue_);
+    rankHeading->addWidget(rankTitle);
+    rankHeading->addWidget(profileRankValue_);
+    rankHeading->addStretch();
+    rankHeading->addLayout(distanceBlock);
+    rankLayout->addLayout(rankHeading);
+    profileRankProgress_ = new QProgressBar(rankCard);
+    profileRankProgress_->setObjectName("profileRankProgress");
+    profileRankProgress_->setRange(0, 100);
+    profileRankProgress_->setValue(0);
+    profileRankProgress_->setFormat(profileUnavailable);
+    profileRankProgress_->setTextVisible(true);
+    rankLayout->addWidget(profileRankProgress_);
+    auto* rankMeta = new QHBoxLayout();
+    profileRemainingValue_ = new QLabel(profileUnavailable, rankCard);
+    profileRemainingValue_->setObjectName("profileRankMeta");
+    profileThresholdValue_ = new QLabel("Next rank at " + profileUnavailable, rankCard);
+    profileThresholdValue_->setObjectName("profileRankMeta");
+    rankMeta->addWidget(profileRemainingValue_);
+    rankMeta->addStretch();
+    rankMeta->addWidget(profileThresholdValue_);
+    rankLayout->addLayout(rankMeta);
+    profileContentLayout->addWidget(rankCard);
+
+    auto* detailsCard = new QFrame(profileContent);
+    detailsCard->setObjectName("profileDetailsCard");
+    detailsCard->setStyleSheet(
+        "QFrame#profileDetailsCard { background: #FFFFFF; border: 1px solid #FFD1E6; border-radius: 9px; }");
+    auto* detailsLayout = new QVBoxLayout(detailsCard);
+    detailsLayout->setContentsMargins(16, 7, 16, 7);
+    detailsLayout->setSpacing(0);
+    auto makeProfileRow = [detailsCard, detailsLayout](const QString& labelText,
+                                                       const QString& valueName)
     {
-        auto* value = new QLabel("—", profilePanel);
-        value->setObjectName(name);
+        auto* row = new QWidget(detailsCard);
+        auto* rowLayout = new QHBoxLayout(row);
+        rowLayout->setContentsMargins(0, 6, 0, 6);
+        rowLayout->setSpacing(8);
+        auto* label = new QLabel(labelText, row);
+        label->setObjectName("profileDetailLabel");
+        label->setFixedWidth(125);
+        auto* value = new QLabel(profileUnavailable, row);
+        value->setObjectName(valueName);
+        value->setProperty("profileValue", true);
+        value->setStyleSheet("font: 400 12px 'Segoe UI'; color: #28232A;");
         value->setTextInteractionFlags(Qt::TextSelectableByMouse);
         value->setWordWrap(true);
+        rowLayout->addWidget(label);
+        rowLayout->addWidget(value, 1);
+        detailsLayout->addWidget(row);
         return value;
     };
-    profileUsernameValue_ = makeProfileValue("profileUsernameValue");
-    profileDisplayNameValue_ = makeProfileValue("profileDisplayNameValue");
-    profileEmailValue_ = makeProfileValue("profileEmailValue");
-    profileDriverIdValue_ = makeProfileValue("profileDriverIdValue");
-    profileDriverStatusValue_ = makeProfileValue("profileDriverStatusValue");
-    profileRoleValue_ = makeProfileValue("profileRoleValue");
-    profileRankValue_ = makeProfileValue("profileRankValue");
-    profileDistanceValue_ = makeProfileValue("profileDistanceValue");
-    profileForm->addRow("USERNAME", profileUsernameValue_);
-    profileForm->addRow("DISPLAY NAME", profileDisplayNameValue_);
-    profileForm->addRow("EMAIL", profileEmailValue_);
-    profileForm->addRow("DRIVER ID", profileDriverIdValue_);
-    profileForm->addRow("ACCOUNT STATUS", profileDriverStatusValue_);
-    profileForm->addRow("ACCOUNT ROLE", profileRoleValue_);
-    profileForm->addRow("DRIVER RANK", profileRankValue_);
-    profileForm->addRow("QUALIFYING DISTANCE", profileDistanceValue_);
-    profileStatus_ = new QLabel("Not connected. Configure a driver key to load your account.", profilePage);
+    auto makeProfileAction = [](const QString& text, const QString& name, QWidget* parent)
+    {
+        auto* button = new QPushButton(text, parent);
+        button->setObjectName(name);
+        button->setProperty("profileAction", true);
+        button->setFixedHeight(25);
+        return button;
+    };
+    auto addProfileSeparator = [detailsCard, detailsLayout]()
+    {
+        auto* separator = new QFrame(detailsCard);
+        separator->setFrameShape(QFrame::HLine);
+        separator->setStyleSheet("QFrame { color: #FCEAF2; background: #FCEAF2; max-height: 1px; }");
+        detailsLayout->addWidget(separator);
+    };
+    profileUsernameValue_ = makeProfileRow("Username", "profileUsernameValue");
+    auto* usernameRow = profileUsernameValue_->parentWidget();
+    profileUsernameCopyButton_ = makeProfileAction("Copy", "profileUsernameCopyButton", usernameRow);
+    usernameRow->layout()->addWidget(profileUsernameCopyButton_);
+    addProfileSeparator();
+    profileDisplayNameValue_ = makeProfileRow("Display name", "profileDisplayNameValue");
+    addProfileSeparator();
+    profileEmailValue_ = makeProfileRow("Email", "profileEmailValue");
+    auto* emailRow = profileEmailValue_->parentWidget();
+    profileEmailVisibilityButton_ = makeProfileAction("Show", "profileEmailVisibilityButton", emailRow);
+    profileEmailCopyButton_ = makeProfileAction("Copy", "profileEmailCopyButton", emailRow);
+    emailRow->layout()->addWidget(profileEmailVisibilityButton_);
+    emailRow->layout()->addWidget(profileEmailCopyButton_);
+    addProfileSeparator();
+    profileDriverIdValue_ = makeProfileRow("Driver ID", "profileDriverIdValue");
+    auto* driverIdRow = profileDriverIdValue_->parentWidget();
+    profileDriverIdCopyButton_ = makeProfileAction("Copy", "profileDriverIdCopyButton", driverIdRow);
+    driverIdRow->layout()->addWidget(profileDriverIdCopyButton_);
+    addProfileSeparator();
+    profileDriverStatusValue_ = makeProfileRow("Account status", "profileDriverStatusValue");
+    addProfileSeparator();
+    profileRoleValue_ = makeProfileRow("Account role", "profileRoleValue");
+    profileContentLayout->addWidget(detailsCard);
+
+    auto* syncCard = new QWidget(profileContent);
+    syncCard->setObjectName("profileSyncCard");
+    syncCard->setStyleSheet(
+        "QWidget#profileSyncCard { background: #FFF4D8; border-radius: 9px; }");
+    auto* syncLayout = new QHBoxLayout(syncCard);
+    syncLayout->setContentsMargins(12, 8, 12, 8);
+    syncLayout->setSpacing(12);
+    auto* syncText = new QVBoxLayout();
+    syncText->setContentsMargins(0, 0, 0, 0);
+    syncText->setSpacing(1);
+    auto* syncTitle = new QLabel("Server synchronization", syncCard);
+    syncTitle->setObjectName("profileSyncTitle");
+    profileStatus_ = new QLabel(
+        "Configure your API URL and key in Settings to connect.", syncCard);
     profileStatus_->setObjectName("profileStatus");
     profileStatus_->setWordWrap(true);
-    profileStatus_->setStyleSheet("color: #665B62; padding: 6px 2px;");
-    refreshProfileButton_ = new QPushButton("REFRESH PROFILE", profilePage);
+    syncText->addWidget(syncTitle);
+    syncText->addWidget(profileStatus_);
+    syncLayout->addLayout(syncText, 1);
+    refreshProfileButton_ = new QPushButton("Refresh profile", syncCard);
     refreshProfileButton_->setObjectName("refreshProfileButton");
-    auto* profileActions = new QHBoxLayout();
-    profileActions->addStretch();
-    profileActions->addWidget(refreshProfileButton_);
-    profileLayout->addWidget(profilePanel);
-    profileLayout->addWidget(profileStatus_);
-    profileLayout->addLayout(profileActions);
-    profileLayout->addStretch();
+    refreshProfileButton_->setStyleSheet(
+        "QPushButton { font: 700 12px 'Segoe UI'; color: #FFFFFF; background: #D94F8C; "
+        "border: 1px solid #C83E7B; border-radius: 7px; padding: 8px 15px; }"
+        "QPushButton:hover { background: #C83E7B; }"
+        "QPushButton:disabled { background: #D99AB7; }");
+    syncLayout->addWidget(refreshProfileButton_);
+    profileContentLayout->addWidget(syncCard);
+    profileContentLayout->addStretch();
+    profileScroll->setWidget(profileContent);
+    profileLayout->addWidget(profileScroll);
     settingsTabs_->addWidget(profilePage);
     settingsLayout->addWidget(settingsTabs_, 1);
     pageStack_->addWidget(settingsPage);
@@ -1221,6 +1471,37 @@ void DashboardMainWindow::buildContent()
             this, &DashboardMainWindow::testApiConnection);
     connect(refreshProfileButton_, &QPushButton::clicked,
             this, &DashboardMainWindow::refreshAccountProfile);
+    connect(profileUsernameCopyButton_, &QPushButton::clicked, this, [this]()
+    {
+        if (profileDataAvailable_)
+        {
+            QApplication::clipboard()->setText(profileUsernameValue_->text());
+        }
+    });
+    connect(profileEmailCopyButton_, &QPushButton::clicked, this, [this]()
+    {
+        if (profileDataAvailable_)
+        {
+            QApplication::clipboard()->setText(profileEmail_);
+        }
+    });
+    connect(profileDriverIdCopyButton_, &QPushButton::clicked, this, [this]()
+    {
+        if (profileDataAvailable_)
+        {
+            QApplication::clipboard()->setText(profileDriverIdValue_->text());
+        }
+    });
+    connect(profileEmailVisibilityButton_, &QPushButton::clicked, this, [this]()
+    {
+        if (!profileDataAvailable_)
+        {
+            return;
+        }
+        profileEmailVisible_ = !profileEmailVisible_;
+        profileEmailValue_->setText(profileEmailVisible_ ? profileEmail_ : maskedEmail(profileEmail_));
+        profileEmailVisibilityButton_->setText(profileEmailVisible_ ? "Hide" : "Show");
+    });
     connect(savePreferencesButton_, &QPushButton::clicked,
             this, &DashboardMainWindow::savePreferences);
     rootLayout->addWidget(pageStack_, 1);
@@ -1289,6 +1570,10 @@ void DashboardMainWindow::savePreferences()
     preferences_ = pending;
     refreshDisplayedSnapshot();
     refreshCompletedJobs();
+    if (profileQualifyingDistanceKm_)
+    {
+        updateProfileRank(*profileQualifyingDistanceKm_);
+    }
     statusBar()->showMessage("PREFERENCES SAVED.");
 }
 
@@ -1320,76 +1605,134 @@ bool DashboardMainWindow::saveApiSettingsFromForm()
     apiSettingsLoadError_.clear();
     if (credentialsChanged)
     {
+        updateApiConnectionState(false,
+            "Credentials changed. Authenticate the configured account to reconnect.");
         authenticatedDriverId_ = 0;
         syncDriverId_ = 0;
         syncRequestInFlight_ = false;
         remoteCompletedJobs_.clear();
+        setProfileUnavailable("Credentials changed. Refresh the profile to authenticate this account.");
         refreshCompletedJobs();
     }
     apiUrlInput_->setText(apiSettings_.baseUrl);
     apiKeyInput_->setText(apiSettings_.apiKey);
     apiConfigStatus_->setText(apiSettings_.apiKey.isEmpty()
-        ? "API link saved securely. Add your driver API key to load your profile."
-        : "API link and key saved securely. Connect to refresh your account and jobs.");
+        ? "API URL saved securely. Add your driver API key to connect."
+        : "API URL and key saved securely. Authenticate to refresh your account and jobs.");
     statusBar()->showMessage("API CONFIGURATION SAVED SECURELY.");
     return true;
 }
 
 void DashboardMainWindow::testApiConnection()
 {
+    if (apiUrlInput_->text().trimmed().isEmpty() || apiKeyInput_->text().trimmed().isEmpty())
+    {
+        updateApiConnectionState(false,
+            "Configure both the API URL and driver API key before connecting.");
+        apiConfigStatus_->setText("Configure your API URL and key in Settings to connect.");
+        setProfileUnavailable("Configure your API URL and key in Settings to connect.");
+        statusBar()->showMessage("API URL AND DRIVER KEY ARE REQUIRED.");
+        return;
+    }
     if (!saveApiSettingsFromForm())
     {
+        updateApiConnectionState(false, "The configured API URL is invalid or unavailable.");
         return;
     }
 
     testApiConnectionButton_->setEnabled(false);
-    if (!apiSettings_.apiKey.isEmpty())
-    {
-        requestAccountProfile(true);
-        return;
-    }
-
-    const QUrl url = apiEndpointUrl(apiSettings_.baseUrl, "health.php");
-    QNetworkRequest request(url);
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                         QNetworkRequest::ManualRedirectPolicy);
-    connectionRequestInFlight_ = true;
-    QNetworkReply* reply = networkManager_->get(request);
-    QTimer::singleShot(15000, reply, [reply]()
-    {
-        if (reply->isRunning())
-        {
-            reply->abort();
-        }
-    });
-    apiConfigStatus_->setText("Checking API availability...");
-    connect(reply, &QNetworkReply::finished, this, [this, reply]()
-    {
-        const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        QJsonParseError parseError;
-        const QJsonDocument response = QJsonDocument::fromJson(reply->readAll(), &parseError);
-        const bool available = statusCode == 200 && parseError.error == QJsonParseError::NoError &&
-            response.isObject() && response.object().value("success").toBool();
-        if (available)
-        {
-            apiConfigStatus_->setText("API is reachable. Add your driver API key to authenticate.");
-        }
-        else
-        {
-            apiConfigStatus_->setText("Could not reach the configured API. Check the HTTPS link and try again.");
-        }
-        statusBar()->showMessage(available
-            ? "API CONNECTION AVAILABLE; DRIVER KEY NOT CONFIGURED."
-            : "API CONNECTION FAILED.");
-        connectionRequestInFlight_ = false;
-        testApiConnectionButton_->setEnabled(true);
-        reply->deleteLater();
-    });
+    requestAccountProfile(true, false);
 }
 
 void DashboardMainWindow::refreshAccountProfile()
 {
     requestAccountProfile(false);
+}
+
+void DashboardMainWindow::updateApiConnectionState(bool online, const QString& explanation)
+{
+    apiOnline_ = online;
+    if (connectionModeLabel_)
+    {
+        connectionModeLabel_->setText(online ? "ONLINE" : "LOCAL MODE");
+        connectionModeLabel_->setToolTip(explanation);
+        connectionModeLabel_->setStyleSheet(online
+            ? "font: 700 10px 'Segoe UI'; color: #1C8059; background: #E4F6EC; "
+                "border-radius: 8px; padding: 3px 8px;"
+            : "font: 700 10px 'Segoe UI'; color: #A15E7D; background: #FDEBF3; "
+                "border-radius: 8px; padding: 3px 8px;");
+    }
+    if (connectionCheckTimer_)
+    {
+        if (online)
+        {
+            connectionRetryDelayMs_ = 5 * 60 * 1000;
+        }
+        else
+        {
+            connectionRetryDelayMs_ = (std::min)(connectionRetryDelayMs_ * 2,
+                                                  15 * 60 * 1000);
+        }
+        connectionCheckTimer_->setInterval(connectionRetryDelayMs_);
+    }
+}
+
+void DashboardMainWindow::setProfileUnavailable(const QString& message)
+{
+    profileDataAvailable_ = false;
+    profileEmailVisible_ = false;
+    profileEmail_.clear();
+    profileQualifyingDistanceKm_.reset();
+    profileAvatar_->setText("?");
+    profileHeaderName_->setText(profileUnavailable);
+    profileHeaderUsername_->setText(profileUnavailable);
+    profileHeaderStatus_->setText(profileUnavailable);
+    profileHeaderRole_->setText(profileUnavailable);
+    profileUsernameValue_->setText(profileUnavailable);
+    profileDisplayNameValue_->setText(profileUnavailable);
+    profileEmailValue_->setText(profileUnavailable);
+    profileDriverIdValue_->setText(profileUnavailable);
+    profileDriverStatusValue_->setText(profileUnavailable);
+    profileRoleValue_->setText(profileUnavailable);
+    profileRankValue_->setText(profileUnavailable);
+    profileDistanceValue_->setText(profileUnavailable);
+    profileRankProgress_->setValue(0);
+    profileRankProgress_->setFormat(profileUnavailable);
+    profileRemainingValue_->setText(profileUnavailable);
+    profileThresholdValue_->setText("Next rank at " + profileUnavailable);
+    profileUsernameCopyButton_->setEnabled(false);
+    profileEmailCopyButton_->setEnabled(false);
+    profileEmailVisibilityButton_->setEnabled(false);
+    profileEmailVisibilityButton_->setText("Show");
+    profileDriverIdCopyButton_->setEnabled(false);
+    profileStatus_->setText(message);
+}
+
+void DashboardMainWindow::updateProfileRank(double qualifyingDistanceKm)
+{
+    const QString rank = rankForDistance(qualifyingDistanceKm);
+    profileRankValue_->setText(rank);
+    profileDistanceValue_->setText(formatDistance(qualifyingDistanceKm, "km", preferences_));
+    const double nextThreshold = nextRankThreshold(rank);
+    if (nextThreshold <= 0.0)
+    {
+        profileRankProgress_->setValue(100);
+        profileRankProgress_->setFormat("MAX RANK");
+        profileRemainingValue_->setText("Top rank reached");
+        profileThresholdValue_->setText("Highest rank");
+        return;
+    }
+
+    const double currentThreshold = rankLowerThreshold(rank);
+    const double progress = (qualifyingDistanceKm - currentThreshold) /
+        (nextThreshold - currentThreshold) * 100.0;
+    profileRankProgress_->setValue(static_cast<int>(std::round(progress)));
+    profileRankProgress_->setFormat("%p%");
+    profileRemainingValue_->setText(
+        formatDistance(nextThreshold - qualifyingDistanceKm, "km", preferences_) +
+        " to next rank");
+    profileThresholdValue_->setText(
+        "Next rank at " + formatDistance(nextThreshold, "km", preferences_));
 }
 
 void DashboardMainWindow::requestCurrencyExchangeRate()
@@ -1458,49 +1801,70 @@ void DashboardMainWindow::requestCurrencyExchangeRate()
     });
 }
 
-void DashboardMainWindow::requestAccountProfile(bool connectionTest, bool synchronizeJobs)
+void DashboardMainWindow::requestAccountProfile(bool connectionTest, bool synchronizeJobs,
+                                                bool automaticCheck)
 {
-    const auto clearProfile = [this]()
-    {
-        profileUsernameValue_->setText("—");
-        profileDisplayNameValue_->setText("—");
-        profileEmailValue_->setText("—");
-        profileDriverIdValue_->setText("—");
-        profileDriverStatusValue_->setText("—");
-        profileRoleValue_->setText("—");
-        profileRankValue_->setText("—");
-        profileDistanceValue_->setText("—");
-    };
-    if (connectionTest ? connectionRequestInFlight_ : profileRequestInFlight_)
+    if (connectionRequestInFlight_ || profileRequestInFlight_)
     {
         return;
     }
-    if (apiSettings_.apiKey.trimmed().isEmpty())
+    if (apiSettings_.baseUrl.trimmed().isEmpty() || apiSettings_.apiKey.trimmed().isEmpty())
     {
-        if (connectionTest)
+        const QString message = "Configure your API URL and key in Settings to connect.";
+        updateApiConnectionState(false, message);
+        authenticatedDriverId_ = 0;
+        if (!profileDataAvailable_)
         {
-            apiConfigStatus_->setText("No driver API key is saved. Add your key to authenticate.");
-            testApiConnectionButton_->setEnabled(true);
+            setProfileUnavailable(message);
         }
         else
         {
-            clearProfile();
-            profileStatus_->setText("Unauthenticated. Add your driver API key in Settings > Config.");
+            profileHeaderStatus_->setText("Cached");
+            profileStatus_->setText("Not connected. Configure your API URL and key in Settings. "
+                                    "Showing the last server-confirmed profile.");
+        }
+        if (connectionTest)
+        {
+            apiConfigStatus_->setText(message);
+            testApiConnectionButton_->setEnabled(true);
         }
         return;
     }
 
+    QString normalizedBaseUrl;
+    QString urlError;
+    if (!normalizeApiBaseUrl(apiSettings_.baseUrl, normalizedBaseUrl, &urlError))
+    {
+        updateApiConnectionState(false, "The configured API URL is invalid.");
+        if (!profileDataAvailable_)
+        {
+            setProfileUnavailable("The saved API URL is invalid. Update it in Settings > Config.");
+        }
+        else
+        {
+            profileHeaderStatus_->setText("Cached");
+            profileStatus_->setText("The saved API URL is invalid. Showing the last "
+                                    "server-confirmed profile.");
+        }
+        if (connectionTest)
+        {
+            apiConfigStatus_->setText(urlError);
+            testApiConnectionButton_->setEnabled(true);
+        }
+        return;
+    }
     const QUrl url = apiEndpointUrl(apiSettings_.baseUrl, "driver-key.php");
     if (!url.isValid())
     {
+        updateApiConnectionState(false, "The configured API endpoint is invalid.");
         if (connectionTest)
         {
             apiConfigStatus_->setText("The saved API link is invalid. Update it in Settings > Config.");
             testApiConnectionButton_->setEnabled(true);
         }
-        else
+        else if (!profileDataAvailable_)
         {
-            profileStatus_->setText("Connection error. Check the API link in Settings > Config.");
+            setProfileUnavailable("Connection error. Check the API URL in Settings > Config.");
         }
         return;
     }
@@ -1513,9 +1877,11 @@ void DashboardMainWindow::requestAccountProfile(bool connectionTest, bool synchr
     else
     {
         profileRequestInFlight_ = true;
-        clearProfile();
-        profileStatus_->setText("Loading account information...");
-        refreshProfileButton_->setEnabled(false);
+        if (!automaticCheck)
+        {
+            profileStatus_->setText("Checking the configured account...");
+            refreshProfileButton_->setEnabled(false);
+        }
     }
 
     QNetworkRequest request(url);
@@ -1535,7 +1901,7 @@ void DashboardMainWindow::requestAccountProfile(bool connectionTest, bool synchr
         }
     });
     connect(reply, &QNetworkReply::finished, this,
-            [this, reply, connectionTest, synchronizeJobs, clearProfile]()
+            [this, reply, connectionTest, synchronizeJobs, automaticCheck]()
     {
         const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         QJsonParseError parseError;
@@ -1544,21 +1910,30 @@ void DashboardMainWindow::requestAccountProfile(bool connectionTest, bool synchr
         const QJsonObject driver = payload.value("driver").toObject();
         const QString role = driver.value("role").toString();
         const QString rank = driver.value("rank").toString();
+        const QString username = driver.value("username").toString().trimmed();
+        const QString displayName = driver.value("display_name").toString().trimmed();
+        const QString email = driver.value("email").toString().trimmed();
         const QJsonValue qualifyingDistance = driver.value("qualifying_distance_km");
         const double qualifyingDistanceKm = qualifyingDistance.toDouble(
             std::numeric_limits<double>::quiet_NaN());
         const double driverIdNumber = driver.value("driver_id").toDouble(-1);
-        const bool authenticated = statusCode == 200 &&
+        const bool rankValid = qualifyingDistance.isDouble() &&
+            std::isfinite(qualifyingDistanceKm) && qualifyingDistanceKm >= 0.0 &&
+            rank == rankForDistance(qualifyingDistanceKm);
+        const bool authenticated = reply->error() == QNetworkReply::NoError &&
+            statusCode == 200 &&
             parseError.error == QJsonParseError::NoError &&
-            payload.value("success").toBool() && payload.value("valid").toBool() &&
-            driver.value("username").isString() &&
-            driver.value("email").isString() &&
-            driver.value("display_name").isString() &&
+            response.isObject() && payload.value("success").toBool(false) &&
+            payload.value("valid").toBool(false) &&
+            driver.value("username").isString() && !username.isEmpty() &&
+            driver.value("email").isString() && !email.isEmpty() &&
+            driver.value("display_name").isString() && !displayName.isEmpty() &&
+            !role.trimmed().isEmpty() &&
             driver.value("status").toString() == "active" &&
             driver.value("driver_id").isDouble() &&
             std::isfinite(driverIdNumber) && driverIdNumber > 0 &&
             driverIdNumber < static_cast<double>((std::numeric_limits<qint64>::max)()) &&
-            std::floor(driverIdNumber) == driverIdNumber;
+            std::floor(driverIdNumber) == driverIdNumber && rankValid;
 
         QString message;
         if (authenticated)
@@ -1571,27 +1946,29 @@ void DashboardMainWindow::requestAccountProfile(bool connectionTest, bool synchr
                 refreshCompletedJobs();
             }
             authenticatedDriverId_ = accountId;
-            profileUsernameValue_->setText(driver.value("username").toString("—"));
-            profileDisplayNameValue_->setText(driver.value("display_name").toString("—"));
-            profileEmailValue_->setText(driver.value("email").toString("—"));
+            profileDataAvailable_ = true;
+            profileQualifyingDistanceKm_ = qualifyingDistanceKm;
+            profileUsernameValue_->setText(username);
+            profileDisplayNameValue_->setText(displayName);
+            profileEmail_ = email;
+            profileEmailVisible_ = false;
+            profileEmailValue_->setText(maskedEmail(email));
             profileDriverIdValue_->setText(QString::number(accountId));
-            profileDriverStatusValue_->setText(driver.value("status").toString("—"));
-            const bool roleValid = role == "DRIVER" || role == "ADMIN" ||
-                role == "CEO" || role == "MANAGER";
-            const bool rankValid = rank == "Trainee" || rank == "Driver" ||
-                rank == "Elder" || rank == "Veteran" || rank == "Expert" ||
-                rank == "Legend" || rank == "Master" || rank == "Ultimate" ||
-                rank == "Mythic";
-            const bool distanceValid = qualifyingDistance.isDouble() &&
-                std::isfinite(qualifyingDistanceKm) && qualifyingDistanceKm >= 0.0;
-            profileRoleValue_->setText(roleValid ? role : "—");
-            profileRankValue_->setText(rankValid && distanceValid ? rank : "—");
-            profileDistanceValue_->setText(distanceValid
-                ? formatDistance(qualifyingDistanceKm, "km", preferences_)
-                : "—");
-            profileStatus_->setText(rankValid && distanceValid
-                ? "Connected. Account role and rank are confirmed by the server."
-                : "Connected. Server rank data is unavailable or invalid.");
+            profileDriverStatusValue_->setText("active");
+            profileRoleValue_->setText(role);
+            profileAvatar_->setText(displayName.left(1).toUpper());
+            profileHeaderName_->setText(displayName);
+            profileHeaderUsername_->setText("@" + username);
+            profileHeaderStatus_->setText("Active");
+            profileHeaderRole_->setText(role);
+            profileUsernameCopyButton_->setEnabled(true);
+            profileEmailCopyButton_->setEnabled(true);
+            profileEmailVisibilityButton_->setEnabled(true);
+            profileDriverIdCopyButton_->setEnabled(true);
+            updateProfileRank(qualifyingDistanceKm);
+            updateApiConnectionState(true,
+                "The configured API is reachable and the driver key authenticated successfully.");
+            profileStatus_->setText("Profile confirmed by the server.");
             if (connectionTest)
             {
                 message = "API connection verified and driver key accepted.";
@@ -1601,9 +1978,9 @@ void DashboardMainWindow::requestAccountProfile(bool connectionTest, bool synchr
             }
             else
             {
-                profileStatus_->setText(rankValid && distanceValid
-                    ? "Profile refreshed from the authenticated account."
-                    : "Profile loaded, but server rank data is unavailable or invalid.");
+                profileStatus_->setText(automaticCheck
+                    ? "Online. Profile and rank are confirmed by the server."
+                    : "Profile refreshed from the authenticated account.");
             }
             if (synchronizeJobs)
             {
@@ -1630,41 +2007,56 @@ void DashboardMainWindow::requestAccountProfile(bool connectionTest, bool synchr
         {
             if (reply->error() != QNetworkReply::NoError)
             {
-                message = "Could not reach the configured API. Local jobs remain available.";
+                message = "Could not reach the configured API. Local telemetry and jobs remain available.";
             }
             else if (statusCode == 200 && parseError.error != QJsonParseError::NoError)
             {
-                message = "The API returned an invalid profile response. Local jobs remain available.";
+                message = "The API returned a malformed profile response. Local data remains available.";
             }
             else if (statusCode == 200)
             {
-                message = payload.value("success").toBool() && payload.value("valid").toBool()
-                    ? "The API returned incomplete account profile data. Local jobs remain available."
-                    : "The API did not confirm the account profile. Local jobs remain available.";
+                message = "The API did not return a valid authenticated profile and rank. "
+                    "Local data remains available.";
             }
             else
             {
-                message = "Could not reach the configured API. Check your network and API link.";
+                message = "Could not confirm the configured API account. Check your network and API URL.";
             }
         }
 
         if (!authenticated)
         {
+            updateApiConnectionState(false, message);
+            authenticatedDriverId_ = 0;
+            if (profileDataAvailable_)
+            {
+                profileHeaderStatus_->setText("Cached");
+            }
             if (!connectionTest)
             {
-                clearProfile();
-                profileStatus_->setText(statusCode == 401 || statusCode == 400
-                    ? "Unauthenticated. " + message
-                    : message);
+                if (profileDataAvailable_)
+                {
+                    profileHeaderStatus_->setText("Cached");
+                    profileStatus_->setText("LOCAL MODE. Showing the last server-confirmed profile. "
+                                            + message);
+                }
+                else
+                {
+                    setProfileUnavailable(message);
+                }
             }
             else
             {
                 apiConfigStatus_->setText(message);
+                if (profileDataAvailable_)
+                {
+                    profileStatus_->setText(
+                        "LOCAL MODE. Showing the last server-confirmed profile. " + message);
+                }
                 testApiConnectionButton_->setEnabled(true);
             }
             if (statusCode == 401 || statusCode == 400 || statusCode == 403)
             {
-                authenticatedDriverId_ = 0;
                 remoteCompletedJobs_.clear();
                 remoteActiveJobs_.clear();
                 refreshCompletedJobs();
@@ -1686,7 +2078,8 @@ void DashboardMainWindow::requestAccountProfile(bool connectionTest, bool synchr
 
 void DashboardMainWindow::synchronizeAccountJobs(qint64 accountId)
 {
-    if (accountId <= 0 || apiSettings_.apiKey.trimmed().isEmpty() ||
+    if (!apiOnline_ || accountId <= 0 || apiSettings_.baseUrl.trimmed().isEmpty() ||
+        apiSettings_.apiKey.trimmed().isEmpty() ||
         apiSettings_.clientInstanceId.isEmpty())
     {
         return;

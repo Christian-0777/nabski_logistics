@@ -39,7 +39,7 @@ struct UserPreferences
 
 struct ApiSettings
 {
-    QString baseUrl = "https://emphasis-shady-creasing.ngrok-free.dev/xtian_tools/nlsi-api";
+    QString baseUrl;
     QString apiKey;
     QString clientInstanceId;
 };

@@ -33,9 +33,9 @@ int main(int argc, char** argv)
     }
     const QString dashboardProfilePath = dashboardProfileDirectory.filePath("profile.nlsi");
     nlsi::DashboardMainWindow window(nullptr, QString(), dashboardProfilePath);
-    if (window.windowTitle() != "NLSI Exclusive Logbook 1.7.9 Beta")
+    if (window.windowTitle() != "NLSI Exclusive Logbook 1.8.0 Beta")
     {
-        std::cerr << "The dashboard window title does not report v1.7.9 Beta.\n";
+        std::cerr << "The dashboard window title does not report v1.8.0 Beta.\n";
         return 1;
     }
     auto* jobSyncTimer = window.findChild<QTimer*>("jobSyncTimer");
@@ -89,7 +89,7 @@ int main(int argc, char** argv)
         std::cerr << "Dashboard unavailable values or neutral summary state are incorrect.\n";
         return 1;
     }
-    if (!window.findChildren<QProgressBar*>().isEmpty())
+    if (!scroll->widget()->findChildren<QProgressBar*>().isEmpty())
     {
         std::cerr << "Dashboard still contains a graphical progress bar.\n";
         return 1;
@@ -317,18 +317,36 @@ int main(int argc, char** argv)
         return 1;
     }
     profileTab->click();
+    auto* profileProgress = window.findChild<QProgressBar*>("profileRankProgress");
+    auto* profileCopyButton = window.findChild<QPushButton*>("profileUsernameCopyButton");
+    auto* profileEmailVisibility = window.findChild<QPushButton*>("profileEmailVisibilityButton");
     if (settingsTabs->currentIndex() != 2 ||
         !window.findChild<QLabel*>("profileStatus") ||
-        !window.findChild<QLabel*>("profileStatus")->text().startsWith("Unauthenticated") ||
-        window.findChild<QLabel*>("profileUsernameValue")->text() != "—" ||
-        apiKeyInput->echoMode() != QLineEdit::Password)
+        !window.findChild<QLabel*>("profileStatus")->text().contains("Configure your API URL and key") ||
+        !window.findChild<QLabel*>("headerMode")->text().contains("LOCAL MODE") ||
+        apiKeyInput->echoMode() != QLineEdit::Password ||
+        !profileProgress || profileProgress->format() != "Not connected" ||
+        !profileCopyButton || profileCopyButton->isEnabled() ||
+        !profileEmailVisibility || profileEmailVisibility->isEnabled())
     {
         std::cerr << "Profile tab does not show a safe unauthenticated state.\n";
         return 1;
     }
+    for (const char* profileField : {
+             "profileUsernameValue", "profileDisplayNameValue", "profileEmailValue",
+             "profileDriverIdValue", "profileDriverStatusValue", "profileRoleValue",
+             "profileRankValue", "profileDistanceValue"})
+    {
+        const auto* value = window.findChild<QLabel*>(profileField);
+        if (!value || value->text() != "Not connected")
+        {
+            std::cerr << "A profile value is missing its disconnected placeholder.\n";
+            return 1;
+        }
+    }
     configTab->click();
     if (settingsTabs->currentIndex() != 1 ||
-        apiUrlInput->text() != "https://emphasis-shady-creasing.ngrok-free.dev/xtian_tools/nlsi-api")
+        !apiUrlInput->text().isEmpty())
     {
         std::cerr << "Config tab does not show the configured API link.\n";
         return 1;

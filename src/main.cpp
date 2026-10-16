@@ -11,7 +11,7 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     app.setApplicationName("NLSI Exclusive Logbook");
     app.setApplicationDisplayName("NLSI Exclusive Logbook");
-    app.setApplicationVersion("1.7.9 Beta");
+    app.setApplicationVersion("1.8.0 Beta");
 
     const QString iconPath = QFileInfo(QDir::currentPath(), "resources/nlsi.ico").exists()
         ? QDir::currentPath() + "/resources/nlsi.ico"

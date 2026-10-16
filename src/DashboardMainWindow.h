@@ -24,6 +24,7 @@ class QPushButton;
 class QTimer;
 class QLineEdit;
 class QNetworkAccessManager;
+class QProgressBar;
 
 namespace nlsi {
 
@@ -45,7 +46,11 @@ private:
     bool saveApiSettingsFromForm();
     void testApiConnection();
     void refreshAccountProfile();
-    void requestAccountProfile(bool connectionTest, bool synchronizeJobs = true);
+    void requestAccountProfile(bool connectionTest, bool synchronizeJobs = true,
+                               bool automaticCheck = false);
+    void updateApiConnectionState(bool online, const QString& explanation);
+    void setProfileUnavailable(const QString& message);
+    void updateProfileRank(double qualifyingDistanceKm);
     void requestCurrencyExchangeRate();
     void updateNavigationState(QPushButton* activeButton);
     void startTelemetryListener();
@@ -87,7 +92,6 @@ private:
     QLabel* apiConfigStatus_ = nullptr;
     QPushButton* saveApiSettingsButton_ = nullptr;
     QPushButton* testApiConnectionButton_ = nullptr;
-    QLabel* profileStatus_ = nullptr;
     QLabel* profileUsernameValue_ = nullptr;
     QLabel* profileDisplayNameValue_ = nullptr;
     QLabel* profileEmailValue_ = nullptr;
@@ -96,13 +100,28 @@ private:
     QLabel* profileRoleValue_ = nullptr;
     QLabel* profileRankValue_ = nullptr;
     QLabel* profileDistanceValue_ = nullptr;
+    QLabel* profileAvatar_ = nullptr;
+    QLabel* profileHeaderName_ = nullptr;
+    QLabel* profileHeaderUsername_ = nullptr;
+    QLabel* profileHeaderStatus_ = nullptr;
+    QLabel* profileHeaderRole_ = nullptr;
+    QLabel* profileRemainingValue_ = nullptr;
+    QLabel* profileThresholdValue_ = nullptr;
+    QLabel* profileStatus_ = nullptr;
     QPushButton* refreshProfileButton_ = nullptr;
+    QPushButton* profileUsernameCopyButton_ = nullptr;
+    QPushButton* profileEmailCopyButton_ = nullptr;
+    QPushButton* profileEmailVisibilityButton_ = nullptr;
+    QPushButton* profileDriverIdCopyButton_ = nullptr;
+    QProgressBar* profileRankProgress_ = nullptr;
+    QLabel* connectionModeLabel_ = nullptr;
     QNetworkAccessManager* networkManager_ = nullptr;
     QLocalServer* localServer_ = nullptr;
     QLocalSocket* selectedTelemetrySocket_ = nullptr;
     QTimer* telemetryTimer_ = nullptr;
     QTimer* processTimer_ = nullptr;
     QTimer* jobSyncTimer_ = nullptr;
+    QTimer* connectionCheckTimer_ = nullptr;
     bool processScanInFlight_ = false;
     GameProcessState processState_ = GameProcessState::NotRunning;
     QHash<QLocalSocket*, QByteArray> receiveBuffers_;
@@ -115,13 +134,19 @@ private:
     ApiSettings apiSettings_;
     QString apiSettingsLoadError_;
     std::optional<double> eurUsdRate_;
+    std::optional<double> profileQualifyingDistanceKm_;
     bool connectionRequestInFlight_ = false;
     bool profileRequestInFlight_ = false;
+    bool apiOnline_ = false;
+    bool profileDataAvailable_ = false;
+    bool profileEmailVisible_ = false;
+    QString profileEmail_;
     bool syncRequestInFlight_ = false;
     bool exchangeRateRequestInFlight_ = false;
     bool syncAgainRequested_ = false;
     int unauthenticatedSyncTicks_ = 0;
     int syncRetryDelayMs_ = 60000;
+    int connectionRetryDelayMs_ = 60000;
     qint64 authenticatedDriverId_ = 0;
     qint64 syncDriverId_ = 0;
     std::vector<JobRecord> remoteCompletedJobs_;

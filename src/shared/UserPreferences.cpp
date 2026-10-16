@@ -417,7 +417,7 @@ bool ProfileStore::loadApiSettings(ApiSettings& settings, QString* error) const
         setError(error, "Saved client instance ID is invalid.");
         return false;
     }
-    settings.baseUrl = api.value("base_url").toString(settings.baseUrl);
+    settings.baseUrl = api.value("base_url").toString();
     settings.apiKey = api.value("key").toString();
     settings.clientInstanceId = api.value("client_instance_id").toString();
     if (settings.clientInstanceId.isEmpty())

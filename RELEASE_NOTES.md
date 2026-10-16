@@ -1,4 +1,4 @@
-# NLSI Exclusive Logbook v1.7.9 Beta
+# NLSI Exclusive Logbook v1.8.0 Beta
 
 ## What's new
 
@@ -20,7 +20,7 @@
 - Preserve telemetry, the encrypted profile, user measurement preferences,
   Summary event history, completed-job details, and PDF export.
 
-See `docs/RELEASE-NOTES-v1.7.9-beta.md` for API and validation details.
+See `docs/RELEASE-NOTES-v1.8.0-beta.md` for profile, API, and validation details.
 
 ---
 
