@@ -1,5 +1,7 @@
 # NLSI Exclusive Logbook
 
+> GitHub repository: `nabski_logistics`.
+
 NLSI Exclusive Logbook is a native Windows desktop telemetry dashboard for **Euro Truck Simulator 2 (ETS2)** and **American Truck Simulator (ATS)**. The application is developed in C++17 with Qt Widgets and interfaces with the official SCS Telemetry SDK (version 1.15) to display real-time vehicle, driving, navigation, and job metrics.
 
 > **Project Status:** Beta / Active Development (current release: `v1.7.4 Beta`). Features, telemetry mappings, and live gameplay behavior may evolve between releases. Unverified gameplay scenarios or unconfirmed SDK channels are never assumed or fabricated.
