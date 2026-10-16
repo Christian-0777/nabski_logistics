@@ -1,0 +1,94 @@
+name: Discord Release Notification
+
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+jobs:
+  notify:
+    if: >-
+      github.run_attempt == 1 &&
+      github.event.action == 'published' &&
+      github.event.release.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Send release notification to Discord
+        env:
+          DISCORD_REPO_UPDATE: ${{ secrets.DISCORD_REPO_UPDATE }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          import urllib.error
+          import urllib.request
+
+          webhook_url = os.environ.get("DISCORD_REPO_UPDATE", "").strip()
+          if not webhook_url:
+              sys.exit("Required Actions secret DISCORD_REPO_UPDATE is missing.")
+
+          with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as event_file:
+              event = json.load(event_file)
+
+          release = event.get("release") or {}
+          if event.get("action") != "published" or release.get("draft", True):
+              sys.exit("Ignoring an event that is not a published release.")
+
+          def text(value, fallback):
+              return value.strip() if isinstance(value, str) and value.strip() else fallback
+
+          def truncate(value, limit):
+              if len(value) <= limit:
+                  return value
+              suffix = "… (truncated; see the full release)"
+              return value[:limit - len(suffix)].rstrip() + suffix
+
+          tag = text(release.get("tag_name"), "unknown")
+          title = truncate(text(release.get("name"), tag), 256)
+          body = text(release.get("body"), "No release notes provided.")
+          description = truncate(body, 3500)
+          repository = text((event.get("repository") or {}).get("full_name"), "Unknown")
+          author_data = release.get("author") or {}
+          author = text(author_data.get("login") or author_data.get("name"), "Unknown")
+          release_url = text(release.get("html_url"), "")
+          published_at = text(release.get("published_at"), "")
+
+          embed = {
+              "title": title,
+              "description": description,
+              "color": 5763719,
+              "fields": [
+                  {"name": "Version", "value": truncate(tag, 1024), "inline": True},
+                  {"name": "Author", "value": truncate(author, 256), "inline": True},
+                  {"name": "Repository", "value": truncate(repository, 256), "inline": True},
+              ],
+          }
+          if release_url:
+              embed["url"] = release_url
+          if published_at:
+              embed["timestamp"] = published_at
+
+          payload = {
+              "allowed_mentions": {"parse": []},
+              "embeds": [embed],
+          }
+          request = urllib.request.Request(
+              webhook_url,
+              data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+
+          try:
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  if not 200 <= response.status < 300:
+                      sys.exit(f"Discord webhook returned HTTP {response.status}.")
+          except urllib.error.HTTPError as error:
+              sys.exit(f"Discord webhook returned HTTP {error.code}.")
+          except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+              sys.exit("Discord webhook request failed due to a network or request error.")
+          PY
