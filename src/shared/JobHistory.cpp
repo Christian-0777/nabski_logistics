@@ -1,6 +1,7 @@
 #include "JobHistory.h"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 #include <QDir>
@@ -353,6 +354,392 @@ std::vector<JobRecord> JobHistory::completedJobs(QString* error) const
         return left.completedAt > right.completedAt;
     });
     return records;
+}
+
+bool JobHistory::reconcileServerRecord(const JobRecord& serverRecord, QString* error)
+{
+    if (error)
+    {
+        error->clear();
+    }
+    const QString localId = QString::fromStdString(serverRecord.localJobId);
+    static const QRegularExpression idPattern("^NLSI-[0-9]{4,}$");
+    if (!idPattern.match(localId).hasMatch())
+    {
+        if (error)
+        {
+            *error = "The server job does not contain a valid stable local job ID.";
+        }
+        return false;
+    }
+
+    const auto mergeMissingFields = [](JobRecord& local, const JobRecord& remote)
+    {
+        for (const auto& field : remote.snapshot.values)
+        {
+            const auto existing = local.snapshot.values.find(field.first);
+            if (existing == local.snapshot.values.end() ||
+                !existing->second.available ||
+                trimString(existing->second.value).empty())
+            {
+                if (field.second.available && !trimString(field.second.value).empty())
+                {
+                    local.snapshot.values[field.first] = field.second;
+                }
+            }
+        }
+        if (local.snapshot.gameId.empty()) local.snapshot.gameId = remote.snapshot.gameId;
+        if (local.snapshot.gameName.empty()) local.snapshot.gameName = remote.snapshot.gameName;
+        if (local.snapshot.gameApiVersion.empty())
+        {
+            local.snapshot.gameApiVersion = remote.snapshot.gameApiVersion;
+        }
+    };
+
+    if (active_ && active_->id == serverRecord.localJobId)
+    {
+        mergeMissingFields(*active_, serverRecord);
+        if (serverRecord.status == JobStatus::Delivered ||
+            serverRecord.status == JobStatus::Cancelled)
+        {
+            if (!serverRecord.completedAt.isValid())
+            {
+                if (error)
+                {
+                    *error = "The server terminal job is missing its completion timestamp.";
+                }
+                return false;
+            }
+            if (!finalizeActive(serverRecord.status, serverRecord.completedAt))
+            {
+                if (error)
+                {
+                    *error = error_;
+                }
+                return false;
+            }
+            return true;
+        }
+        if (!saveActive(error_))
+        {
+            if (error)
+            {
+                *error = error_;
+            }
+            return false;
+        }
+        error_.clear();
+        return true;
+    }
+
+    const QString fileName = localId + ".nlsi";
+    const QString path = snapshotPath(directory_, fileName);
+    if (!QFile::exists(path))
+    {
+        return true;
+    }
+    JobRecord local;
+    QString readError;
+    if (!readRecord(path, local, readError))
+    {
+        if (error)
+        {
+            *error = readError;
+        }
+        return false;
+    }
+    mergeMissingFields(local, serverRecord);
+    if (serverRecord.status == JobStatus::Delivered ||
+        serverRecord.status == JobStatus::Cancelled)
+    {
+        if (!serverRecord.completedAt.isValid())
+        {
+            if (error)
+            {
+                *error = "The server terminal job is missing its completion timestamp.";
+            }
+            return false;
+        }
+        local.status = serverRecord.status;
+        local.completedAt = serverRecord.completedAt;
+        local.snapshot.values["job.status"] = {
+            "Status", jobStatusToString(local.status), "", true
+        };
+    }
+    if (!saveRecord(local, fileName, readError))
+    {
+        if (error)
+        {
+            *error = readError;
+        }
+        return false;
+    }
+    return true;
+}
+
+std::optional<JobSyncState> JobHistory::syncState(const std::string& localJobId,
+                                                  QString* error) const
+{
+    if (error)
+    {
+        error->clear();
+    }
+    QJsonObject root;
+    QString readError;
+    if (!readSyncStates(root, readError))
+    {
+        if (error)
+        {
+            *error = readError;
+        }
+        return std::nullopt;
+    }
+    const QJsonValue value = root.value("jobs").toObject().value(
+        QString::fromStdString(localJobId));
+    if (!value.isObject())
+    {
+        return std::nullopt;
+    }
+    const QJsonObject entry = value.toObject();
+    bool accountIdValid = false;
+    qint64 accountId = 0;
+    if (entry.value("account_id").isString())
+    {
+        accountId = entry.value("account_id").toString().toLongLong(&accountIdValid);
+    }
+    else if (entry.value("account_id").isDouble())
+    {
+        const double numericId = entry.value("account_id").toDouble();
+        if (numericId > 0 && numericId <= static_cast<double>(
+                std::numeric_limits<qint64>::max()) &&
+            std::floor(numericId) == numericId)
+        {
+            accountId = static_cast<qint64>(numericId);
+            accountIdValid = true;
+        }
+    }
+    if (!accountIdValid || !entry.value("status").isString() ||
+        !entry.value("server_job_id").isString() ||
+        !entry.value("error").isString())
+    {
+        if (error)
+        {
+            *error = "The local job synchronization state is malformed.";
+        }
+        return std::nullopt;
+    }
+    JobSyncState state;
+    state.accountId = accountId;
+    state.status = entry.value("status").toString();
+    state.serverJobId = entry.value("server_job_id").toString();
+    state.error = entry.value("error").toString();
+    if (state.accountId <= 0 ||
+        (state.status != "pending" && state.status != "synced" && state.status != "failed"))
+    {
+        if (error)
+        {
+            *error = "The local job synchronization state contains unsupported values.";
+        }
+        return std::nullopt;
+    }
+    return state;
+}
+
+bool JobHistory::claimForAccount(const std::string& localJobId, qint64 accountId, QString* error)
+{
+    if (error)
+    {
+        error->clear();
+    }
+    if (accountId <= 0 || localJobId.empty())
+    {
+        if (error)
+        {
+            *error = "A valid account and local job ID are required to synchronize a job.";
+        }
+        return false;
+    }
+
+    QLockFile lock(snapshotPath(directory_, ".sync-state.lock"));
+    lock.setStaleLockTime(30000);
+    if (!lock.tryLock(5000))
+    {
+        if (error)
+        {
+            *error = "Could not lock local job synchronization state.";
+        }
+        return false;
+    }
+    QJsonObject root;
+    QString stateError;
+    if (!readSyncStates(root, stateError))
+    {
+        if (error)
+        {
+            *error = stateError;
+        }
+        return false;
+    }
+    QJsonObject jobs = root.value("jobs").toObject();
+    const QString key = QString::fromStdString(localJobId);
+    if (jobs.contains(key))
+    {
+        const QJsonValue value = jobs.value(key);
+        if (!value.isObject())
+        {
+            if (error)
+            {
+                *error = "The local job synchronization state is malformed.";
+            }
+            return false;
+        }
+        const QJsonValue storedId = value.toObject().value("account_id");
+        const qint64 storedAccountId = storedId.isString()
+            ? storedId.toString().toLongLong()
+            : static_cast<qint64>(storedId.toDouble(-1));
+        if (storedAccountId != accountId)
+        {
+            if (error)
+            {
+                *error = "This local job belongs to another account and was not uploaded.";
+            }
+            return false;
+        }
+        return true;
+    }
+
+    jobs.insert(key, QJsonObject{
+        {"account_id", QString::number(accountId)},
+        {"status", "pending"},
+        {"server_job_id", QString()},
+        {"error", QString()}
+    });
+    root.insert("format", 1);
+    root.insert("jobs", jobs);
+    if (!writeSyncStates(root, stateError))
+    {
+        if (error)
+        {
+            *error = stateError;
+        }
+        return false;
+    }
+    return true;
+}
+
+bool JobHistory::setSyncState(const std::string& localJobId, const JobSyncState& state,
+                              QString* error)
+{
+    if (error)
+    {
+        error->clear();
+    }
+    if (state.accountId <= 0 ||
+        (state.status != "pending" && state.status != "synced" && state.status != "failed"))
+    {
+        if (error)
+        {
+            *error = "The requested local job synchronization state is invalid.";
+        }
+        return false;
+    }
+
+    QLockFile lock(snapshotPath(directory_, ".sync-state.lock"));
+    lock.setStaleLockTime(30000);
+    if (!lock.tryLock(5000))
+    {
+        if (error)
+        {
+            *error = "Could not lock local job synchronization state.";
+        }
+        return false;
+    }
+    QJsonObject root;
+    QString stateError;
+    if (!readSyncStates(root, stateError))
+    {
+        if (error)
+        {
+            *error = stateError;
+        }
+        return false;
+    }
+    QJsonObject jobs = root.value("jobs").toObject();
+    const QString key = QString::fromStdString(localJobId);
+    const QJsonValue existing = jobs.value(key);
+    if (!existing.isObject() ||
+        (existing.toObject().value("account_id").isString()
+            ? existing.toObject().value("account_id").toString().toLongLong()
+            : static_cast<qint64>(existing.toObject().value("account_id").toDouble(-1))) !=
+            state.accountId)
+    {
+        if (error)
+        {
+            *error = "The local job is not assigned to this authenticated account.";
+        }
+        return false;
+    }
+    jobs.insert(key, QJsonObject{
+        {"account_id", QString::number(state.accountId)},
+        {"status", state.status},
+        {"server_job_id", state.serverJobId},
+        {"error", state.error}
+    });
+    root.insert("format", 1);
+    root.insert("jobs", jobs);
+    if (!writeSyncStates(root, stateError))
+    {
+        if (error)
+        {
+            *error = stateError;
+        }
+        return false;
+    }
+    return true;
+}
+
+bool JobHistory::readSyncStates(QJsonObject& states, QString& error) const
+{
+    const QString path = snapshotPath(directory_, ".sync-state.nlsi");
+    QFile file(path);
+    if (!file.exists())
+    {
+        states = QJsonObject{{"format", 1}, {"jobs", QJsonObject()}};
+        return true;
+    }
+    if (!file.open(QIODevice::ReadOnly))
+    {
+        error = QString("Cannot read local job synchronization state: %1").arg(file.errorString());
+        return false;
+    }
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject() ||
+        document.object().value("format").toInt(-1) != 1 ||
+        !document.object().value("jobs").isObject())
+    {
+        error = "The local job synchronization state file is invalid; local jobs were preserved.";
+        return false;
+    }
+    states = document.object();
+    return true;
+}
+
+bool JobHistory::writeSyncStates(const QJsonObject& states, QString& error) const
+{
+    QSaveFile file(snapshotPath(directory_, ".sync-state.nlsi"));
+    if (!file.open(QIODevice::WriteOnly))
+    {
+        error = QString("Cannot write local job synchronization state: %1").arg(file.errorString());
+        return false;
+    }
+    const QByteArray bytes = QJsonDocument(states).toJson(QJsonDocument::Compact);
+    if (file.write(bytes) != bytes.size() || !file.commit())
+    {
+        error = QString("Cannot commit local job synchronization state: %1").arg(file.errorString());
+        return false;
+    }
+    return true;
 }
 
 const std::optional<JobRecord>& JobHistory::activeJob() const

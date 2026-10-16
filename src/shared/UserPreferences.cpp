@@ -8,6 +8,9 @@
 #include <QLockFile>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QStringList>
+#include <QUrl>
+#include <QUuid>
 
 #ifdef Q_OS_WIN
 #include <Windows.h>
@@ -234,6 +237,66 @@ void setError(QString* target, const QString& error)
     }
 }
 
+bool writeProfile(const QString& filePath, const QJsonObject& profile, QString& error)
+{
+    const QFileInfo destination(filePath);
+    if (!QDir().mkpath(destination.absolutePath()))
+    {
+        error = QString("Cannot create profile directory: %1")
+            .arg(destination.absolutePath());
+        return false;
+    }
+
+    QByteArray encrypted;
+    if (!protect(QJsonDocument(profile).toJson(QJsonDocument::Compact), encrypted, error))
+    {
+        return false;
+    }
+
+    QSaveFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly))
+    {
+        error = QString("Cannot write encrypted profile %1: %2")
+            .arg(filePath, file.errorString());
+        return false;
+    }
+    if (file.write(profileHeader) != profileHeader.size() ||
+        file.write(encrypted) != encrypted.size())
+    {
+        error = QString("Cannot write complete encrypted profile %1: %2")
+            .arg(filePath, file.errorString());
+        file.cancelWriting();
+        return false;
+    }
+    if (!file.commit())
+    {
+        error = QString("Cannot atomically replace encrypted profile %1: %2")
+            .arg(filePath, file.errorString());
+        return false;
+    }
+    return true;
+}
+
+bool lockProfile(const QString& filePath, QLockFile& lock, QString& error)
+{
+    const QString directory = QFileInfo(filePath).absolutePath();
+    if (!QDir().mkpath(directory))
+    {
+        error = QString("Cannot create profile directory: %1").arg(directory);
+        return false;
+    }
+    lock.setStaleLockTime(30000);
+    if (!lock.tryLock(5000))
+    {
+        error = QString("Cannot lock encrypted profile %1: %2")
+            .arg(filePath, lock.error() == QLockFile::LockFailedError
+                ? "another process is saving it"
+                : "lock file could not be created");
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 bool isValidPreferences(const UserPreferences& preferences)
@@ -242,6 +305,34 @@ bool isValidPreferences(const UserPreferences& preferences)
         !volumeToString(preferences.volume).isEmpty() &&
         !currencyToString(preferences.currency).isEmpty() &&
         !distanceToString(preferences.distance).isEmpty();
+}
+
+bool normalizeApiBaseUrl(const QString& value, QString& normalized, QString* error)
+{
+    setError(error, QString());
+    const QUrl url(value.trimmed(), QUrl::StrictMode);
+    if (!url.isValid() || url.scheme().compare("https", Qt::CaseInsensitive) != 0 ||
+        url.host().isEmpty() || !url.userInfo().isEmpty() ||
+        !url.query().isEmpty() || !url.fragment().isEmpty())
+    {
+        setError(error, "Enter a valid HTTPS API base URL without credentials, query, or fragment.");
+        return false;
+    }
+
+    QStringList segments = url.path().split('/', Qt::SkipEmptyParts);
+    QStringList uniqueSegments;
+    for (const QString& segment : segments)
+    {
+        if (uniqueSegments.isEmpty() ||
+            uniqueSegments.constLast().compare(segment, Qt::CaseInsensitive) != 0)
+        {
+            uniqueSegments.append(segment);
+        }
+    }
+    QUrl result = url;
+    result.setPath(uniqueSegments.isEmpty() ? QString() : "/" + uniqueSegments.join('/'));
+    normalized = result.toString();
+    return true;
 }
 
 ProfileStore::ProfileStore(QString filePath)
@@ -286,6 +377,61 @@ bool ProfileStore::load(UserPreferences& preferences, QString* error) const
     return true;
 }
 
+bool ProfileStore::loadApiSettings(ApiSettings& settings, QString* error) const
+{
+    settings = ApiSettings();
+    settings.clientInstanceId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    setError(error, QString());
+    QString readError;
+    QJsonObject profile;
+    bool exists = false;
+    if (!readProfile(filePath_, profile, exists, readError))
+    {
+        setError(error, readError);
+        return false;
+    }
+    if (!exists || !profile.contains("api"))
+    {
+        return true;
+    }
+
+    const QJsonValue value = profile.value("api");
+    if (!value.isObject())
+    {
+        setError(error, "Saved API settings are invalid.");
+        return false;
+    }
+    const QJsonObject api = value.toObject();
+    if (api.contains("base_url") && !api.value("base_url").isString())
+    {
+        setError(error, "Saved API URL is invalid.");
+        return false;
+    }
+    if (api.contains("key") && !api.value("key").isString())
+    {
+        setError(error, "Saved API key is invalid.");
+        return false;
+    }
+    if (api.contains("client_instance_id") && !api.value("client_instance_id").isString())
+    {
+        setError(error, "Saved client instance ID is invalid.");
+        return false;
+    }
+    settings.baseUrl = api.value("base_url").toString(settings.baseUrl);
+    settings.apiKey = api.value("key").toString();
+    settings.clientInstanceId = api.value("client_instance_id").toString();
+    if (settings.clientInstanceId.isEmpty())
+    {
+        settings.clientInstanceId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    }
+    else if (QUuid(settings.clientInstanceId).isNull())
+    {
+        setError(error, "Saved client instance ID is invalid.");
+        return false;
+    }
+    return true;
+}
+
 bool ProfileStore::save(const UserPreferences& preferences, QString* error) const
 {
     setError(error, QString());
@@ -295,60 +441,87 @@ bool ProfileStore::save(const UserPreferences& preferences, QString* error) cons
         return false;
     }
 
-    const QFileInfo destination(filePath_);
-    if (!QDir().mkpath(destination.absolutePath()))
-    {
-        setError(error, QString("Cannot create profile directory: %1")
-            .arg(destination.absolutePath()));
-        return false;
-    }
-    QLockFile lock(filePath_ + ".lock");
-    lock.setStaleLockTime(30000);
-    if (!lock.tryLock(5000))
-    {
-        setError(error, QString("Cannot lock encrypted profile %1: %2")
-            .arg(filePath_, lock.error() == QLockFile::LockFailedError
-                ? "another process is saving it"
-                : "lock file could not be created"));
-        return false;
-    }
-
     QJsonObject profile;
     bool exists = false;
     QString readError;
+    QLockFile lock(filePath_ + ".lock");
+    if (!lockProfile(filePath_, lock, readError))
+    {
+        setError(error, readError);
+        return false;
+    }
     if (!readProfile(filePath_, profile, exists, readError))
     {
         setError(error, readError);
         return false;
     }
-    profile.insert("preferences", preferencesToJson(preferences));
+    if (profile.contains("preferences") && !profile.value("preferences").isObject())
+    {
+        setError(error, "Saved preferences are invalid; encrypted profile was not changed.");
+        return false;
+    }
 
-    QByteArray encrypted;
-    if (!protect(QJsonDocument(profile).toJson(QJsonDocument::Compact), encrypted, readError))
+    QJsonObject savedPreferences = profile.value("preferences").toObject();
+    const QJsonObject updatedPreferences = preferencesToJson(preferences);
+    for (auto it = updatedPreferences.constBegin(); it != updatedPreferences.constEnd(); ++it)
+    {
+        savedPreferences.insert(it.key(), it.value());
+    }
+    profile.insert("preferences", savedPreferences);
+    if (!writeProfile(filePath_, profile, readError))
     {
         setError(error, readError);
         return false;
     }
+    return true;
+}
 
-    QSaveFile file(filePath_);
-    if (!file.open(QIODevice::WriteOnly))
+bool ProfileStore::saveApiSettings(const ApiSettings& settings, QString* error) const
+{
+    setError(error, QString());
+    QString normalizedUrl;
+    QString validationError;
+    if (!normalizeApiBaseUrl(settings.baseUrl, normalizedUrl, &validationError))
     {
-        setError(error, QString("Cannot write encrypted profile %1: %2")
-            .arg(filePath_, file.errorString()));
+        setError(error, validationError);
         return false;
     }
-    if (file.write(profileHeader) != profileHeader.size() ||
-        file.write(encrypted) != encrypted.size())
+
+    QString readError;
+    QLockFile lock(filePath_ + ".lock");
+    if (!lockProfile(filePath_, lock, readError))
     {
-        setError(error, QString("Cannot write complete encrypted profile %1: %2")
-            .arg(filePath_, file.errorString()));
-        file.cancelWriting();
+        setError(error, readError);
         return false;
     }
-    if (!file.commit())
+    QJsonObject profile;
+    bool exists = false;
+    if (!readProfile(filePath_, profile, exists, readError))
     {
-        setError(error, QString("Cannot atomically replace encrypted profile %1: %2")
-            .arg(filePath_, file.errorString()));
+        setError(error, readError);
+        return false;
+    }
+    if (profile.contains("api") && !profile.value("api").isObject())
+    {
+        setError(error, "Saved API settings are invalid; encrypted profile was not changed.");
+        return false;
+    }
+    QJsonObject api = profile.value("api").toObject();
+    api.insert("base_url", normalizedUrl);
+    api.insert("key", settings.apiKey.trimmed());
+    const QString clientInstanceId = settings.clientInstanceId.isEmpty()
+        ? QUuid::createUuid().toString(QUuid::WithoutBraces)
+        : settings.clientInstanceId;
+    if (QUuid(clientInstanceId).isNull())
+    {
+        setError(error, "Client instance ID must be a UUID.");
+        return false;
+    }
+    api.insert("client_instance_id", clientInstanceId);
+    profile.insert("api", api);
+    if (!writeProfile(filePath_, profile, readError))
+    {
+        setError(error, readError);
         return false;
     }
     return true;

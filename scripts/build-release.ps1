@@ -4,9 +4,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$buildDir = Join-Path $root 'build\release-v1.7.4-beta-x64'
-$buildX86Dir = Join-Path $root 'build\release-v1.7.4-beta-x86-plugin'
-$releaseDir = Join-Path $root 'releases\1.7.4-beta'
+$buildDir = Join-Path $root 'build\release-v1.7.9-beta-x64'
+$buildX86Dir = Join-Path $root 'build\release-v1.7.9-beta-x86-plugin'
+$releaseDir = Join-Path $root 'releases\1.7.9-beta'
 $qtDir = 'C:\Qt\6.12.0\msvc2022_64'
 $qtBin = Join-Path $qtDir 'bin'
 $ninja = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe'
@@ -100,11 +100,18 @@ if ($x64InspectionText -match '(?i)(MSVCP|VCRUNTIME)140' -or
 }
 
 $fileVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($dashboardExe)
-if ($fileVersion.FileVersion -ne '1.7.4.0' -or $fileVersion.ProductVersion -ne '1.7.4 Beta') {
+if ($fileVersion.FileVersion -ne '1.7.9.0' -or $fileVersion.ProductVersion -ne '1.7.9 Beta') {
     throw "Dashboard executable version metadata is incorrect: file=$($fileVersion.FileVersion), product=$($fileVersion.ProductVersion)"
 }
+foreach ($plugin in @($pluginX64Dll, $pluginX86Dll)) {
+    $pluginVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($plugin)
+    if ($pluginVersion.FileVersion -ne '1.7.9.0' -or
+        $pluginVersion.ProductVersion -ne '1.7.9 Beta') {
+        throw "Plugin version metadata is incorrect for ${plugin}: file=$($pluginVersion.FileVersion), product=$($pluginVersion.ProductVersion)"
+    }
+}
 
-$packageRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('nlsi-1.7.4-beta-' + [guid]::NewGuid().ToString('N'))
+$packageRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('nlsi-1.7.9-beta-' + [guid]::NewGuid().ToString('N'))
 $payloadDir = Join-Path $releaseDir 'payload'
 New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
 if (Test-Path -LiteralPath $payloadDir) {
@@ -220,7 +227,11 @@ try {
         $installerSource = Get-Content -LiteralPath $installerScript -Raw
         $requiredInstallerRules = @(
             'AppId={{B58E42DA-BC15-4FD0-9DCC-44E4E14D374D}',
-            '#define MyAppVersion "1.7.4 Beta"',
+            '#define MyAppVersion "1.7.9 Beta"',
+            "TikTokProfileUrl = 'https://www.tiktok.com/@nabskiplays';",
+            "TikTokFollowCheck.Caption := 'Follow Nabski Plays on TikTok';",
+            'TikTokFollowCheck.Checked := False;',
+            'function NextButtonClick(CurPageID: Integer): Boolean;',
             'PrivilegesRequired=admin',
             'CloseApplications=yes',
             'CloseApplicationsFilter={#MyAppExeName}',
@@ -229,7 +240,12 @@ try {
             "Result := AddBackslash(ETS2X86Directory) + 'plugins\' + PluginDllName;",
             "Result := ExpandConstant('{app}\plugin\win_x64\' + PluginDllName);",
             "Result := ExpandConstant('{app}\plugin\win_x86\' + PluginDllName);",
-            "ProductVersion = '1.7.4 Beta'",
+            "ProductVersion = '1.7.9 Beta'",
+            "NLSI Exclusive Logbook 1.7.9 Beta|",
+            "NLSI Exclusive Logbook 1.7.8 Beta|",
+            "NLSI Exclusive Logbook 1.7.7 Beta|",
+            "NLSI Exclusive Logbook 1.7.6 Beta|",
+            "NLSI Exclusive Logbook 1.7.5 Beta|",
             "NLSI Exclusive Logbook 1.7.4 Beta|",
             "NLSI Exclusive Logbook 1.7.3 Beta|",
             "NLSI Exclusive Logbook 1.7.2 Beta|",
@@ -241,8 +257,11 @@ try {
             "GameProcessIsRunning('amtrucks.exe', ProcessError)",
             'if not CheckGamesAreClosed(GameError) then',
             'HasMatchingGameExecutable(ArchitectureDirectory, ExecutableName)',
-            'Could not replace the plugin DLL:',
-            'Plugin replacement verification failed:',
+            'Flags: ignoreversion restartreplace; Check: ShouldInstallETS2X64; AfterInstall: MarkETS2X64PluginInstalled',
+            'Flags: ignoreversion restartreplace; Check: ShouldInstallETS2X86; AfterInstall: MarkETS2X86PluginInstalled',
+            'Flags: ignoreversion restartreplace; Check: ShouldInstallATSX64; AfterInstall: MarkATSX64PluginInstalled',
+            'Flags: ignoreversion restartreplace; Check: ShouldInstallATSX86; AfterInstall: MarkATSX86PluginInstalled',
+            'procedure MarkPluginInstalled(const SourceFile: String; const TargetFile: String);',
             'RemoveObsoleteManagedFiles;',
             'BackupFile := TargetFile + PluginBackupSuffix;',
             'eurotrucks2.exe',
@@ -265,9 +284,8 @@ try {
             throw 'Installer scripts must not copy, replace, or remove per-user profile data.'
         }
         if ($installerSource -match '(?im)^Name:\s*"(ets2plugin|atsplugin)"' -or
-            $installerSource -notmatch '(?im)InstallPlugin\(ETS2X64Source, ETS2X64PluginPath' -or
-            $installerSource -notmatch '(?im)InstallPlugin\(ATSX64Source, ATSX64PluginPath') {
-            throw 'Game plugin deployment must be automatic and must include both game families.'
+            $installerSource -match '(?im)InstallPlugin\s*\(') {
+            throw 'Game plugin deployment must use automatic installer-managed replacement.'
         }
         $installerCompilerOutput = & $iscc "/DReleasePayloadDir=$payloadDir" $installerScript
         if ($LASTEXITCODE -ne 0) {
@@ -283,28 +301,28 @@ try {
         Write-Output $installerCompilerOutput
         Write-Output 'Verified that Inno Setup compressed every staged payload file.'
 
-        $installer = Join-Path $releaseDir 'NLSI-Exclusive-Logbook-v1.7.4-beta-Setup.exe'
+        $installer = Join-Path $releaseDir 'NLSI-Exclusive-Logbook-v1.7.9-beta-Setup.exe'
         if (-not (Test-Path $installer) -or (Get-Item $installer).Length -lt 1000000) {
             throw "Compiled installer is missing or unexpectedly small: $installer"
         }
         $installerVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($installer)
-        if ($installerVersion.ProductVersion.Trim() -ne '1.7.4.0' -or
-            $installerVersion.FileDescription.Trim() -notmatch '1\.7\.4 Beta') {
+        if ($installerVersion.ProductVersion.Trim() -ne '1.7.9.0' -or
+            $installerVersion.FileDescription.Trim() -notmatch '1\.7\.9 Beta') {
             throw "Installer version metadata is incorrect: product=$($installerVersion.ProductVersion), description=$($installerVersion.FileDescription)"
         }
 
-        Copy-Item (Join-Path $root 'docs\RELEASE-NOTES-v1.7.4-beta.md') (Join-Path $releaseDir 'RELEASE-NOTES-v1.7.4-beta.md') -Force
-        Copy-Item (Join-Path $root 'docs\INSTALLATION-v1.7.4-beta.md') (Join-Path $releaseDir 'INSTALLATION-v1.7.4-beta.md') -Force
+        Copy-Item (Join-Path $root 'docs\RELEASE-NOTES-v1.7.9-beta.md') (Join-Path $releaseDir 'RELEASE-NOTES-v1.7.9-beta.md') -Force
+        Copy-Item (Join-Path $root 'docs\INSTALLATION-v1.7.9-beta.md') (Join-Path $releaseDir 'INSTALLATION-v1.7.9-beta.md') -Force
         $manifestFiles = @(
             $installer,
             (Join-Path $payloadDir 'nlsi_dashboard.exe'),
             (Join-Path $payloadDir 'plugin\win_x64\nlsi_scs_plugin.dll'),
             (Join-Path $payloadDir 'plugin\win_x86\nlsi_scs_plugin.dll'),
-            (Join-Path $releaseDir 'RELEASE-NOTES-v1.7.4-beta.md'),
-            (Join-Path $releaseDir 'INSTALLATION-v1.7.4-beta.md')
+            (Join-Path $releaseDir 'RELEASE-NOTES-v1.7.9-beta.md'),
+            (Join-Path $releaseDir 'INSTALLATION-v1.7.9-beta.md')
         )
         $manifestLines = @(
-            'NLSI Exclusive Logbook 1.7.4 Beta release artifact SHA-256 manifest',
+            'NLSI Exclusive Logbook 1.7.9 Beta release artifact SHA-256 manifest',
             'Hashes cover the installer, application, both plugins, and release documents.'
         )
         foreach ($file in $manifestFiles) {

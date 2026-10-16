@@ -1,3 +1,29 @@
+# NLSI Exclusive Logbook v1.7.9 Beta
+
+## What's new
+
+- Automatically synchronize completed local jobs after account authentication,
+  retry failed work with bounded backoff, and refresh server jobs periodically
+  without duplicate uploads.
+- Keep local history available when the job list cannot be fetched; distinguish
+  upload, fetch, authentication, and malformed-response failures.
+- Display native ETS2 EUR and ATS USD income accurately, with optional
+  conversion using a validated and freshness-checked Frankfurter rate.
+- Refresh authenticated role, server-calculated distance rank, and qualifying
+  distance; reconcile active, pending, delivered, and cancelled jobs.
+- Reconcile server and local job histories by stable local job IDs and
+  server-assigned job IDs, preserving populated local details and avoiding
+  duplicate entries.
+- Keep account ownership and synchronization state separate from local job
+  data. Failed uploads remain available locally for retries, and jobs bound to
+  another account are not uploaded to the newly connected account.
+- Preserve telemetry, the encrypted profile, user measurement preferences,
+  Summary event history, completed-job details, and PDF export.
+
+See `docs/RELEASE-NOTES-v1.7.9-beta.md` for API and validation details.
+
+---
+
 # NLSI Exclusive Logbook v1.7.4 Beta
 
 ## What's new

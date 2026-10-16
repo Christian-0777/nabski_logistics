@@ -149,6 +149,85 @@ int main()
                    "a valid changed job route still starts a new job record") && ok;
     }
 
+    {
+        const QString syncDirectory = QDir(temporary.path()).filePath("sync-state-jobs");
+        nlsi::JobHistory history(syncDirectory);
+        auto active = activeSnapshot();
+        ok = check(history.processSnapshot(active, start), "sync-state job starts locally") && ok;
+        auto delivered = terminalSnapshot("DELIVERED");
+        ok = check(history.processSnapshot(delivered, finish), "sync-state job is completed locally") && ok;
+        QString syncError;
+        ok = check(history.claimForAccount("NLSI-0001", 7, &syncError) && syncError.isEmpty(),
+                   "an unassigned local job can be claimed by the authenticated account") && ok;
+        nlsi::JobSyncState synced;
+        synced.accountId = 7;
+        synced.status = "synced";
+        synced.serverJobId = "NLSI-9001";
+        ok = check(history.setSyncState("NLSI-0001", synced, &syncError),
+                   "server acknowledgment is persisted separately from the local job") && ok;
+        nlsi::JobHistory restarted(syncDirectory);
+        const auto persisted = restarted.syncState("NLSI-0001", &syncError);
+        ok = check(persisted && persisted->accountId == 7 &&
+                   persisted->status == "synced" &&
+                   persisted->serverJobId == "NLSI-9001" &&
+                   restarted.completedJobs().size() == 1,
+                   "job synchronization state survives restart without replacing the local record") && ok;
+        ok = check(!restarted.claimForAccount("NLSI-0001", 8, &syncError) &&
+                   syncError.contains("another account"),
+                   "a job assigned to one account cannot be claimed by another account") && ok;
+    }
+
+    {
+        const QString reconcileDirectory = QDir(temporary.path()).filePath("reconciled-jobs");
+        nlsi::JobHistory history(reconcileDirectory);
+        ok = check(history.processSnapshot(activeSnapshot(), start),
+                   "reconciliation fixture starts a local job") && ok;
+        auto delivered = terminalSnapshot("DELIVERED");
+        delivered.values.erase("job.earned_xp");
+        ok = check(history.processSnapshot(delivered, finish),
+                   "reconciliation fixture saves the local delivery") && ok;
+
+        nlsi::JobRecord server;
+        server.id = "NLSI-9001";
+        server.localJobId = "NLSI-0001";
+        server.status = nlsi::JobStatus::Cancelled;
+        server.startedAt = start;
+        server.completedAt = finish.addSecs(15);
+        server.snapshot.values["job.source_city"] = {"From", "", "", false};
+        server.snapshot.values["job.earned_xp"] = {"XP", "75", "", true};
+        QString reconcileError;
+        ok = check(history.reconcileServerRecord(server, &reconcileError) &&
+                   reconcileError.isEmpty(),
+                   "authenticated server state reconciles into the stable local record") && ok;
+        const auto reconciled = history.completedJobs();
+        ok = check(reconciled.size() == 1 &&
+                   reconciled.front().status == nlsi::JobStatus::Cancelled &&
+                   reconciled.front().snapshot.values.at("job.source_city").value == "Berlin" &&
+                   reconciled.front().snapshot.values.at("job.income").value == "1200" &&
+                   reconciled.front().snapshot.values.at("job.earned_xp").value == "75",
+                   "server reconciliation updates status and fills missing fields without clearing populated local data") && ok;
+    }
+
+    {
+        const QString activeReconcileDirectory = QDir(temporary.path()).filePath("active-reconciled-jobs");
+        nlsi::JobHistory history(activeReconcileDirectory);
+        ok = check(history.processSnapshot(activeSnapshot(), start),
+                   "active reconciliation fixture persists locally") && ok;
+        nlsi::JobRecord server;
+        server.id = "NLSI-9002";
+        server.localJobId = "NLSI-0001";
+        server.status = nlsi::JobStatus::Delivered;
+        server.startedAt = start;
+        server.completedAt = finish;
+        server.snapshot.values["job.income"] = {"Income", "", "game currency", false};
+        QString reconcileError;
+        ok = check(history.reconcileServerRecord(server, &reconcileError) &&
+                   !history.activeJob() && history.completedJobs().size() == 1,
+                   "a server-confirmed terminal status finalizes a matching local active record") && ok;
+        ok = check(history.completedJobs().front().snapshot.values.at("job.income").value == "1200",
+                   "active reconciliation preserves existing local income when the server value is unavailable") && ok;
+    }
+
     if (!ok)
     {
         return 1;

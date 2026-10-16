@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(nlsi_exclusive_logbook VERSION 1.7.4 LANGUAGES CXX)
+project(nlsi_exclusive_logbook VERSION 1.7.9 LANGUAGES CXX)
 
 if(WIN32)
     enable_language(RC)
@@ -123,6 +123,7 @@ endif()
 add_library(nlsi_scs_plugin SHARED
     src/plugin/ScsTelemetryPlugin.cpp
     src/plugin/nlsi_scs_plugin.def
+    src/plugin/version.rc
 )
 
 target_include_directories(nlsi_scs_plugin

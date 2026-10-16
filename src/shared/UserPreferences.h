@@ -37,7 +37,15 @@ struct UserPreferences
     DistanceUnit distance = DistanceUnit::Kilometres;
 };
 
+struct ApiSettings
+{
+    QString baseUrl = "https://emphasis-shady-creasing.ngrok-free.dev/xtian_tools/nlsi-api";
+    QString apiKey;
+    QString clientInstanceId;
+};
+
 bool isValidPreferences(const UserPreferences& preferences);
+bool normalizeApiBaseUrl(const QString& value, QString& normalized, QString* error = nullptr);
 
 class ProfileStore
 {
@@ -46,7 +54,9 @@ public:
 
     QString filePath() const;
     bool load(UserPreferences& preferences, QString* error = nullptr) const;
+    bool loadApiSettings(ApiSettings& settings, QString* error = nullptr) const;
     bool save(const UserPreferences& preferences, QString* error = nullptr) const;
+    bool saveApiSettings(const ApiSettings& settings, QString* error = nullptr) const;
 
 private:
     QString filePath_;

@@ -176,29 +176,49 @@ QString formatVolume(double liters, const UserPreferences& preferences, int deci
 }
 
 QString formatCurrencyAmount(double value, const QString& denomination,
-                             const UserPreferences& preferences)
+                             const UserPreferences& preferences,
+                             std::optional<double> eurUsdRate)
 {
-    Q_UNUSED(preferences);
     if (!std::isfinite(value))
     {
         return QString::fromUtf8("—");
     }
     const QString source = denomination.trimmed();
     const QString lower = source.toLower();
-    if (lower == "eur" || source == "€")
+    const bool sourceIsEur = lower == "eur" || lower == "euro" || source == "€";
+    const bool sourceIsUsd = lower == "usd" || lower == "us dollar" || source == "$";
+    if (!sourceIsEur && !sourceIsUsd)
     {
+        const QString amount = groupedNumber(value, 2);
+        return source.isEmpty() ? amount : QString("%1 %2").arg(amount, source.toUpper());
+    }
+
+    const bool targetIsEur = preferences.currency == CurrencyUnit::Euro;
+    if ((sourceIsEur && targetIsEur) || (sourceIsUsd && !targetIsEur))
+    {
+        const QString symbol = sourceIsEur ? "€" : "$";
         return QString("%1%2")
-            .arg(value < 0.0 ? "€-" : "€")
+            .arg(value < 0.0 ? symbol + "-" : symbol)
             .arg(groupedNumber(std::fabs(value), 2));
     }
-    if (lower == "usd" || source == "$")
+    double displayedValue = value;
+    bool displayEur = sourceIsEur;
+    if (eurUsdRate.has_value() && std::isfinite(*eurUsdRate) && *eurUsdRate > 0.0)
     {
-        return QString("%1%2")
-            .arg(value < 0.0 ? "$-" : "$")
-            .arg(groupedNumber(std::fabs(value), 2));
+        displayedValue = sourceIsEur ? value * *eurUsdRate : value / *eurUsdRate;
+        if (std::isfinite(displayedValue))
+        {
+            displayEur = targetIsEur;
+        }
+        else
+        {
+            displayedValue = value;
+        }
     }
-    const QString amount = groupedNumber(value, 2);
-    return source.isEmpty() ? amount : QString("%1 %2").arg(amount, source.toUpper());
+    const QString symbol = displayEur ? "€" : "$";
+    return QString("%1%2")
+        .arg(displayedValue < 0.0 ? symbol + "-" : symbol)
+        .arg(groupedNumber(std::fabs(displayedValue), 2));
 }
 
 } // namespace nlsi

@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QGroupBox>
 #include <QLabel>
+#include <QLineEdit>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSizePolicy>
@@ -32,9 +33,15 @@ int main(int argc, char** argv)
     }
     const QString dashboardProfilePath = dashboardProfileDirectory.filePath("profile.nlsi");
     nlsi::DashboardMainWindow window(nullptr, QString(), dashboardProfilePath);
-    if (window.windowTitle() != "NLSI Exclusive Logbook 1.7.4 Beta")
+    if (window.windowTitle() != "NLSI Exclusive Logbook 1.7.9 Beta")
     {
-        std::cerr << "The dashboard window title does not report v1.7.4 Beta.\n";
+        std::cerr << "The dashboard window title does not report v1.7.9 Beta.\n";
+        return 1;
+    }
+    auto* jobSyncTimer = window.findChild<QTimer*>("jobSyncTimer");
+    if (!jobSyncTimer || !jobSyncTimer->isActive() || jobSyncTimer->interval() != 60000)
+    {
+        std::cerr << "The authenticated job synchronization poll is not configured.\n";
         return 1;
     }
     if (window.minimumSize() != QSize(900, 600))
@@ -101,7 +108,7 @@ int main(int argc, char** argv)
     auto* fieldValue = window.findChild<QLabel*>("telemetryValue");
     auto* cardTitle = panels.at(0);
     if (!sidebar || !dashboardItem || !completedItem || !settingsItem || !pageStack ||
-        !settingsTabs || settingsTabs->count() != 2 || !dashboardScroll ||
+        !settingsTabs || settingsTabs->count() != 3 || !dashboardScroll ||
         dashboardItem->sizePolicy().horizontalPolicy() != QSizePolicy::Expanding ||
         !dashboardItem->property("sidebarNavButton").toBool() ||
         !completedItem->property("sidebarNavButton").toBool() ||
@@ -282,13 +289,17 @@ int main(int argc, char** argv)
 
     auto* settingsNavigation = window.findChild<QPushButton*>("settingsNavButton");
     auto* preferenceTab = window.findChild<QPushButton*>("preferenceTabButton");
+    auto* configTab = window.findChild<QPushButton*>("configTabButton");
     auto* profileTab = window.findChild<QPushButton*>("profileTabButton");
+    auto* apiUrlInput = window.findChild<QLineEdit*>("apiUrlInput");
+    auto* apiKeyInput = window.findChild<QLineEdit*>("apiKeyInput");
     auto* speedPreference = window.findChild<QComboBox*>("speedPreference");
     auto* volumePreference = window.findChild<QComboBox*>("volumePreference");
     auto* currencyPreference = window.findChild<QComboBox*>("currencyPreference");
     auto* distancePreference = window.findChild<QComboBox*>("distancePreference");
     auto* savePreferences = window.findChild<QPushButton*>("savePreferencesButton");
-    if (!settingsNavigation || !preferenceTab || !profileTab || !speedPreference ||
+    if (!settingsNavigation || !preferenceTab || !configTab || !profileTab ||
+        !apiUrlInput || !apiKeyInput || !speedPreference ||
         !volumePreference || !currencyPreference || !distancePreference || !savePreferences)
     {
         std::cerr << "Settings navigation or preference controls are missing.\n";
@@ -306,11 +317,20 @@ int main(int argc, char** argv)
         return 1;
     }
     profileTab->click();
-    if (settingsTabs->currentIndex() != 1 ||
-        !window.findChild<QLabel*>("profileComingSoon") ||
-        window.findChild<QLabel*>("profileComingSoon")->text() != "COMING SOON")
+    if (settingsTabs->currentIndex() != 2 ||
+        !window.findChild<QLabel*>("profileStatus") ||
+        !window.findChild<QLabel*>("profileStatus")->text().startsWith("Unauthenticated") ||
+        window.findChild<QLabel*>("profileUsernameValue")->text() != "—" ||
+        apiKeyInput->echoMode() != QLineEdit::Password)
     {
-        std::cerr << "Profile tab does not show the Coming Soon state.\n";
+        std::cerr << "Profile tab does not show a safe unauthenticated state.\n";
+        return 1;
+    }
+    configTab->click();
+    if (settingsTabs->currentIndex() != 1 ||
+        apiUrlInput->text() != "https://emphasis-shady-creasing.ngrok-free.dev/xtian_tools/nlsi-api")
+    {
+        std::cerr << "Config tab does not show the configured API link.\n";
         return 1;
     }
     preferenceTab->click();
@@ -369,7 +389,7 @@ int main(int argc, char** argv)
     nlsi::UserPreferences historyPreferences;
     historyPreferences.speed = nlsi::SpeedUnit::MilesPerHour;
     historyPreferences.volume = nlsi::VolumeUnit::UsGallons;
-    historyPreferences.currency = nlsi::CurrencyUnit::UsDollar;
+    historyPreferences.currency = nlsi::CurrencyUnit::Euro;
     historyPreferences.distance = nlsi::DistanceUnit::Miles;
     nlsi::ProfileStore historyProfileStore(historyProfileDirectory.filePath("profile.nlsi"));
     QString profileSaveError;
@@ -499,11 +519,11 @@ int main(int argc, char** argv)
     for (QLabel* label : completedCards.front()->findChildren<QLabel*>())
     {
         gameCurrencyPreserved = gameCurrencyPreserved ||
-            (label->text().contains("GAME CURRENCY") && !label->text().contains("$"));
+            label->text().contains("€1,200.00");
     }
     if (!gameCurrencyPreserved)
     {
-        std::cerr << "Completed-job card relabeled a game-currency amount.\n";
+        std::cerr << "ETS2 completed-job card did not show native EUR income.\n";
         return 1;
     }
     bool completedCardValuesFormatted = false;
@@ -568,8 +588,7 @@ int main(int argc, char** argv)
                     auto* fieldValue = label->parentWidget()->findChild<QLabel*>("telemetryValue");
                     if (label->text() == "INCOME")
                     {
-                        hasCurrency = fieldValue &&
-                            fieldValue->text() == "1,200.00 GAME CURRENCY";
+                        hasCurrency = fieldValue && fieldValue->text() == "€1,200.00";
                     }
                     else if (label->text() == "PLANNED DISTANCE")
                     {

@@ -133,16 +133,48 @@ int main(int argc, char** argv)
     ok = check(nlsi::formatSpeed(1.0051, "km/h", nlsi::UserPreferences()) == "1.01 KM/H",
                "display rounding is consistent at decimal boundaries") && ok;
 
+    preferences.currency = nlsi::CurrencyUnit::Euro;
     ok = check(nlsi::formatCurrencyAmount(1234.5, "EUR", preferences) == "€1,234.50",
                "known EUR denomination keeps its correct symbol") && ok;
     preferences.currency = nlsi::CurrencyUnit::UsDollar;
     ok = check(nlsi::formatCurrencyAmount(1234.5, "USD", preferences) == "$1,234.50",
                "known USD denomination keeps its correct symbol") && ok;
+    ok = check(nlsi::formatCurrencyAmount(1234.5, "EUR", preferences, 1.2) == "$1,481.40",
+               "EUR income converts once to the selected USD using a valid rate") && ok;
+    preferences.currency = nlsi::CurrencyUnit::Euro;
+    ok = check(nlsi::formatCurrencyAmount(1234.5, "USD", preferences, 1.2) == "€1,028.75",
+               "USD income converts to the selected EUR using the inverse rate") && ok;
+    preferences.currency = nlsi::CurrencyUnit::UsDollar;
+    ok = check(nlsi::formatCurrencyAmount(1234.5, "EUR", preferences) == "€1,234.50",
+               "foreign income remains in its native currency when no exchange rate exists") && ok;
+    ok = check(nlsi::formatCurrencyAmount(1234.5, "EUR", preferences, 0.0) == "€1,234.50" &&
+               nlsi::formatCurrencyAmount(
+                   1234.5, "EUR", preferences,
+                   std::numeric_limits<double>::quiet_NaN()) == "€1,234.50",
+               "invalid exchange rates are not used and native currency is retained") && ok;
+    preferences.currency = nlsi::CurrencyUnit::Euro;
+    ok = check(nlsi::formatCurrencyAmount(1234.5, "USD", preferences) == "$1,234.50",
+               "USD income remains correctly labeled when the EUR/USD rate is unavailable") && ok;
     ok = check(nlsi::formatCurrencyAmount(1234.5, "game currency", preferences) ==
                    "1,234.50 GAME CURRENCY",
-               "unknown or game-denominated amounts are never relabeled as USD") && ok;
-    ok = check(nlsi::formatCurrencyAmount(1.0, "EUR", preferences) == "€1.00",
-               "currency preference never fabricates an exchange rate") && ok;
+               "unknown or game-denominated amounts are never relabeled as EUR or USD") && ok;
+    ok = check(nlsi::formatCurrencyAmount(
+                   1.0, "EUR", preferences, std::numeric_limits<double>::quiet_NaN()) == "€1.00",
+               "native currency display does not depend on an irrelevant invalid exchange rate") && ok;
+
+    QString normalizedApiUrl;
+    QString apiUrlError;
+    ok = check(nlsi::normalizeApiBaseUrl(
+                   "  https://example.com/xtian_tools/nlsi-api/nlsi-api///  ",
+                   normalizedApiUrl, &apiUrlError) &&
+                   normalizedApiUrl == "https://example.com/xtian_tools/nlsi-api",
+               "API base URLs are validated and repeated trailing path segments normalized") && ok;
+    ok = check(!nlsi::normalizeApiBaseUrl("http://example.com/api", normalizedApiUrl, &apiUrlError) &&
+                   !apiUrlError.isEmpty(),
+               "non-HTTPS API URLs are rejected") && ok;
+    ok = check(!nlsi::normalizeApiBaseUrl(
+                   "https://user:password@example.com/api", normalizedApiUrl, &apiUrlError),
+               "API URLs containing credentials are rejected") && ok;
 
     QTemporaryDir temporaryDirectory;
     ok = check(temporaryDirectory.isValid(), "temporary profile directory is available") && ok;
@@ -151,6 +183,7 @@ int main(int argc, char** argv)
         const QString profilePath = temporaryDirectory.filePath("profile.nlsi");
         nlsi::ProfileStore store(profilePath);
         nlsi::UserPreferences loaded;
+        nlsi::ApiSettings loadedApi;
         QString error;
         ok = check(store.load(loaded, &error) && error.isEmpty() &&
                    loaded.speed == nlsi::SpeedUnit::KilometresPerHour &&
@@ -159,6 +192,11 @@ int main(int argc, char** argv)
                    loaded.distance == nlsi::DistanceUnit::Kilometres &&
                    !QFile::exists(profilePath),
                    "missing profile uses safe defaults without creating a file") && ok;
+        ok = check(store.loadApiSettings(loadedApi, &error) && error.isEmpty() &&
+                   loadedApi.baseUrl ==
+                       "https://emphasis-shady-creasing.ngrok-free.dev/xtian_tools/nlsi-api" &&
+                   loadedApi.apiKey.isEmpty() && !QFile::exists(profilePath),
+                   "missing API settings use the configured URL without creating a file") && ok;
 
         nlsi::UserPreferences saved;
         saved.speed = nlsi::SpeedUnit::MilesPerHour;
@@ -179,6 +217,8 @@ int main(int argc, char** argv)
         const QString preservationPath = temporaryDirectory.filePath("preserved.nlsi");
         QJsonObject customProfile;
         customProfile.insert("account", QJsonObject{{"id", "opaque-profile-field"}});
+        customProfile.insert("preferences", QJsonObject{{"eur_to_usd_rate", 1.09}});
+        customProfile.insert("api", QJsonObject{{"future_setting", "keep-me"}});
         ok = check(writeEncryptedProfile(preservationPath, customProfile),
                    "test profile with unrelated encrypted data is created") && ok;
         nlsi::ProfileStore preservationStore(preservationPath);
@@ -188,9 +228,34 @@ int main(int argc, char** argv)
         ok = check(readEncryptedProfile(preservationPath, decryptedProfile) &&
                    decryptedProfile.value("account").toObject().value("id").toString() ==
                        "opaque-profile-field" &&
+                   decryptedProfile.value("preferences").toObject().value("eur_to_usd_rate").toDouble() ==
+                       1.09 &&
                    decryptedProfile.value("preferences").toObject().value("volume").toString() ==
-                       "imperial_gallons",
-                   "saving preferences preserves unrelated encrypted profile fields") && ok;
+                       "imperial_gallons" &&
+                   decryptedProfile.value("api").toObject().value("future_setting").toString() ==
+                       "keep-me",
+                   "saving preferences preserves unrelated profile and preference fields") && ok;
+        nlsi::ApiSettings savedApi;
+        savedApi.baseUrl = "https://example.com/xtian_tools/nlsi-api/";
+        savedApi.apiKey = "AbC123xYz789";
+        savedApi.clientInstanceId = "e3b0c442-98fc-5c14-9afb-f4c8996fb924";
+        ok = check(preservationStore.saveApiSettings(savedApi, &error),
+                   "API URL and key save together in the encrypted profile") && ok;
+        QFile apiProtectedProfile(preservationPath);
+        ok = check(apiProtectedProfile.open(QIODevice::ReadOnly) &&
+                   !apiProtectedProfile.readAll().contains(savedApi.apiKey.toUtf8()),
+                   "API key is never stored in plaintext in profile.nlsi") && ok;
+        ok = check(preservationStore.loadApiSettings(loadedApi, &error) &&
+                   loadedApi.baseUrl == "https://example.com/xtian_tools/nlsi-api" &&
+                   loadedApi.apiKey == savedApi.apiKey &&
+                   loadedApi.clientInstanceId == savedApi.clientInstanceId,
+                   "saved API settings and stable client identity reload from encrypted profile") && ok;
+        ok = check(readEncryptedProfile(preservationPath, decryptedProfile) &&
+                   decryptedProfile.value("api").toObject().value("future_setting").toString() ==
+                       "keep-me" &&
+                   decryptedProfile.value("preferences").toObject().value("eur_to_usd_rate").toDouble() ==
+                       1.09,
+                   "saving API settings preserves unrelated profile and preference fields") && ok;
 
         const QString invalidPreferencesPath = temporaryDirectory.filePath("invalid-preferences.nlsi");
         QJsonObject invalidPreferences;

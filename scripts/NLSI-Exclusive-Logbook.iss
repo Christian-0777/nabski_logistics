@@ -1,8 +1,8 @@
 ; NLSI Exclusive Logbook installer
-; Product version: 1.7.4 Beta
+; Product version: 1.7.9 Beta
 
 #define MyAppName "NLSI Exclusive Logbook"
-#define MyAppVersion "1.7.4 Beta"
+#define MyAppVersion "1.7.9 Beta"
 #define MyAppPublisher "NABSKI Logistics Solutions Inc."
 #define MyAppExeName "nlsi_dashboard.exe"
 #define PluginFileName "nlsi_scs_plugin.dll"
@@ -19,15 +19,15 @@ AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={code:GetDefaultInstallDir}
 DefaultGroupName={#MyAppName}
-OutputDir=..\releases\1.7.4-beta
-OutputBaseFilename=NLSI-Exclusive-Logbook-v1.7.4-beta-Setup
+OutputDir=..\releases\1.7.9-beta
+OutputBaseFilename=NLSI-Exclusive-Logbook-v1.7.9-beta-Setup
 SetupIconFile=..\resources\nlsi.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
-VersionInfoVersion=1.7.4.0
+VersionInfoVersion=1.7.9.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} Setup - {#MyAppVersion}
 VersionInfoProductName={#MyAppName}
-VersionInfoProductVersion=1.7.4.0
+VersionInfoProductVersion=1.7.9.0
 ArchitecturesAllowed=x64os
 ArchitecturesInstallIn64BitMode=x64os
 PrivilegesRequired=admin
@@ -47,6 +47,10 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 
 [Files]
 Source: "{#ReleasePayloadDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#ReleasePayloadDir}\plugin\win_x64\{#PluginFileName}"; DestDir: "{code:GetETS2X64PluginDirectory}"; Flags: ignoreversion restartreplace; Check: ShouldInstallETS2X64; AfterInstall: MarkETS2X64PluginInstalled
+Source: "{#ReleasePayloadDir}\plugin\win_x86\{#PluginFileName}"; DestDir: "{code:GetETS2X86PluginDirectory}"; Flags: ignoreversion restartreplace; Check: ShouldInstallETS2X86; AfterInstall: MarkETS2X86PluginInstalled
+Source: "{#ReleasePayloadDir}\plugin\win_x64\{#PluginFileName}"; DestDir: "{code:GetATSX64PluginDirectory}"; Flags: ignoreversion restartreplace; Check: ShouldInstallATSX64; AfterInstall: MarkATSX64PluginInstalled
+Source: "{#ReleasePayloadDir}\plugin\win_x86\{#PluginFileName}"; DestDir: "{code:GetATSX86PluginDirectory}"; Flags: ignoreversion restartreplace; Check: ShouldInstallATSX86; AfterInstall: MarkATSX86PluginInstalled
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\resources\nlsi.ico"
@@ -59,18 +63,33 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: no
 const
   AppUninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{B58E42DA-BC15-4FD0-9DCC-44E4E14D374D}_is1';
   ProductName = 'NLSI Exclusive Logbook';
-  ProductVersion = '1.7.4 Beta';
+  ProductVersion = '1.7.9 Beta';
   ETS2FolderName = 'Euro Truck Simulator 2';
   ATSFolderName = 'American Truck Simulator';
   PluginDllName = 'nlsi_scs_plugin.dll';
   PluginMarkerSuffix = '.nlsi-owner';
   PluginBackupSuffix = '.nlsi-backup.dll';
+  TikTokProfileUrl = 'https://www.tiktok.com/@nabskiplays';
 
 var
   ETS2RootPath: String;
   ATSRootPath: String;
   SkippedPluginTargets: String;
   PreviousManagedFiles: TStringList;
+  TikTokFollowCheck: TNewCheckBox;
+
+procedure InitializeWizard;
+begin
+  TikTokFollowCheck := TNewCheckBox.Create(WizardForm);
+  TikTokFollowCheck.Parent := WizardForm.FinishedPage;
+  TikTokFollowCheck.Left := WizardForm.FinishedLabel.Left;
+  TikTokFollowCheck.Top := WizardForm.FinishedLabel.Top +
+    WizardForm.FinishedLabel.Height + ScaleY(12);
+  TikTokFollowCheck.Width := WizardForm.FinishedPage.ClientWidth -
+    TikTokFollowCheck.Left - ScaleX(16);
+  TikTokFollowCheck.Caption := 'Follow Nabski Plays on TikTok';
+  TikTokFollowCheck.Checked := False;
+end;
 
 function IsSafeManagedRelativePath(const RelativePath: String): Boolean;
 begin
@@ -208,6 +227,11 @@ end;
 function IsRecognizedNLSIMarker(const Marker: String): Boolean;
 begin
   Result :=
+    (Marker = 'NLSI Exclusive Logbook 1.7.9 Beta') or
+    (Marker = 'NLSI Exclusive Logbook 1.7.8 Beta') or
+    (Marker = 'NLSI Exclusive Logbook 1.7.7 Beta') or
+    (Marker = 'NLSI Exclusive Logbook 1.7.6 Beta') or
+    (Marker = 'NLSI Exclusive Logbook 1.7.5 Beta') or
     (Marker = 'NLSI Exclusive Logbook 1.7.4 Beta') or
     (Marker = 'NLSI Exclusive Logbook 1.7.3 Beta') or
     (Marker = 'NLSI Exclusive Logbook 1.7.2 Beta') or
@@ -218,6 +242,11 @@ begin
     (Marker = 'NLSI Exclusive Logbook 1.6.7 Beta') or
     (Marker = 'NLSI Exclusive Logbook 1.6.6 Beta') or
     (Marker = 'NLSI Exclusive Logbook 1.6.5 Beta') or
+    (Pos('NLSI Exclusive Logbook 1.7.9 Beta|', Marker) = 1) or
+    (Pos('NLSI Exclusive Logbook 1.7.8 Beta|', Marker) = 1) or
+    (Pos('NLSI Exclusive Logbook 1.7.7 Beta|', Marker) = 1) or
+    (Pos('NLSI Exclusive Logbook 1.7.6 Beta|', Marker) = 1) or
+    (Pos('NLSI Exclusive Logbook 1.7.5 Beta|', Marker) = 1) or
     (Pos('NLSI Exclusive Logbook 1.7.4 Beta|', Marker) = 1) or
     (Pos('NLSI Exclusive Logbook 1.7.3 Beta|', Marker) = 1) or
     (Pos('NLSI Exclusive Logbook 1.7.2 Beta|', Marker) = 1) or
@@ -284,6 +313,16 @@ begin
   Result := AddBackslash(ETS2X86Directory) + 'plugins\' + PluginDllName;
 end;
 
+function GetETS2X64PluginDirectory(Param: String): String;
+begin
+  Result := AddBackslash(ETS2X64Directory) + 'plugins';
+end;
+
+function GetETS2X86PluginDirectory(Param: String): String;
+begin
+  Result := AddBackslash(ETS2X86Directory) + 'plugins';
+end;
+
 function ATSX64PluginPath: String;
 begin
   Result := AddBackslash(ATSX64Directory) + 'plugins\' + PluginDllName;
@@ -292,6 +331,16 @@ end;
 function ATSX86PluginPath: String;
 begin
   Result := AddBackslash(ATSX86Directory) + 'plugins\' + PluginDllName;
+end;
+
+function GetATSX64PluginDirectory(Param: String): String;
+begin
+  Result := AddBackslash(ATSX64Directory) + 'plugins';
+end;
+
+function GetATSX86PluginDirectory(Param: String): String;
+begin
+  Result := AddBackslash(ATSX86Directory) + 'plugins';
 end;
 
 function GetDefaultInstallDir(Param: String): String;
@@ -484,35 +533,35 @@ begin
     Result := 'Could not safely prepare the ATS x86 plugin. Close ATS and retry.';
 end;
 
-procedure InstallPlugin(const SourceFile: String; const TargetFile: String;
-  const ArchitectureDirectory: String; const ShouldInstall: Boolean; var Skipped: String);
+procedure MarkPluginInstalled(const SourceFile: String; const TargetFile: String);
 var
   MarkerContents: String;
 begin
-  if not ShouldInstall then
-  begin
-    if DirExists(ArchitectureDirectory) and FileExists(TargetFile) and
-       not PluginCanBeReplaced(TargetFile) then
-    begin
-      if Skipped <> '' then
-        Skipped := Skipped + #13#10;
-      Skipped := Skipped + TargetFile +
-        ' (existing DLL is not an unchanged NLSI-managed file; it was not replaced)';
-    end;
-    Exit;
-  end;
-  if not PreparePluginTarget(TargetFile, ArchitectureDirectory) then
-    RaiseException('Could not safely prepare the NLSI plugin DLL: ' + TargetFile +
-      '. Close the game and any process using this DLL, then retry.');
-  if not CopyFile(SourceFile, TargetFile, False) then
-    RaiseException('Could not replace the plugin DLL: ' + TargetFile +
-      '. Close the game and any process using this DLL, then run the installer again.');
-  if CompareText(GetSHA256OfFile(SourceFile), GetSHA256OfFile(TargetFile)) <> 0 then
-    RaiseException('Plugin replacement verification failed: ' + TargetFile +
-      '. The update was not completed; close the game and retry.');
-  MarkerContents := ProductName + ' ' + ProductVersion + '|' + GetSHA256OfFile(TargetFile);
+  if not FileExists(TargetFile) then
+    RaiseException('The telemetry plugin replacement could not be staged: ' + TargetFile);
+  MarkerContents := ProductName + ' ' + ProductVersion + '|' + GetSHA256OfFile(SourceFile);
   if not SaveStringToFile(TargetFile + PluginMarkerSuffix, MarkerContents, False) then
     RaiseException('Could not write the NLSI ownership marker for: ' + TargetFile);
+end;
+
+procedure MarkETS2X64PluginInstalled;
+begin
+  MarkPluginInstalled(GetETS2X64Payload(''), ETS2X64PluginPath);
+end;
+
+procedure MarkETS2X86PluginInstalled;
+begin
+  MarkPluginInstalled(GetETS2X86Payload(''), ETS2X86PluginPath);
+end;
+
+procedure MarkATSX64PluginInstalled;
+begin
+  MarkPluginInstalled(GetATSX64Payload(''), ATSX64PluginPath);
+end;
+
+procedure MarkATSX86PluginInstalled;
+begin
+  MarkPluginInstalled(GetATSX86Payload(''), ATSX86PluginPath);
 end;
 
 procedure RestorePlugin(const TargetFile: String);
@@ -563,10 +612,6 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  ETS2X64Source: String;
-  ETS2X86Source: String;
-  ATSX64Source: String;
-  ATSX86Source: String;
   GameError: String;
 begin
   if CurStep = ssInstall then
@@ -578,19 +623,35 @@ begin
   begin
     if not CheckGamesAreClosed(GameError) then
       RaiseException(GameError + ' No game plugin DLL was replaced.');
-    ETS2X64Source := ExpandConstant('{app}\plugin\win_x64\' + PluginDllName);
-    ETS2X86Source := ExpandConstant('{app}\plugin\win_x86\' + PluginDllName);
-    ATSX64Source := ETS2X64Source;
-    ATSX86Source := ETS2X86Source;
     SkippedPluginTargets := '';
-    InstallPlugin(ETS2X64Source, ETS2X64PluginPath, ETS2X64Directory,
-      ShouldInstallETS2X64, SkippedPluginTargets);
-    InstallPlugin(ETS2X86Source, ETS2X86PluginPath, ETS2X86Directory,
-      ShouldInstallETS2X86, SkippedPluginTargets);
-    InstallPlugin(ATSX64Source, ATSX64PluginPath, ATSX64Directory,
-      ShouldInstallATSX64, SkippedPluginTargets);
-    InstallPlugin(ATSX86Source, ATSX86PluginPath, ATSX86Directory,
-      ShouldInstallATSX86, SkippedPluginTargets);
+    if DirExists(ETS2X64Directory) and FileExists(ETS2X64PluginPath) and
+       not PluginCanBeReplaced(ETS2X64PluginPath) then
+      SkippedPluginTargets := SkippedPluginTargets + ETS2X64PluginPath +
+        ' (existing DLL is not an unchanged NLSI-managed file; it was not replaced)';
+    if DirExists(ETS2X86Directory) and FileExists(ETS2X86PluginPath) and
+       not PluginCanBeReplaced(ETS2X86PluginPath) then
+    begin
+      if SkippedPluginTargets <> '' then
+        SkippedPluginTargets := SkippedPluginTargets + Chr(13) + Chr(10);
+      SkippedPluginTargets := SkippedPluginTargets + ETS2X86PluginPath +
+        ' (existing DLL is not an unchanged NLSI-managed file; it was not replaced)';
+    end;
+    if DirExists(ATSX64Directory) and FileExists(ATSX64PluginPath) and
+       not PluginCanBeReplaced(ATSX64PluginPath) then
+    begin
+      if SkippedPluginTargets <> '' then
+        SkippedPluginTargets := SkippedPluginTargets + Chr(13) + Chr(10);
+      SkippedPluginTargets := SkippedPluginTargets + ATSX64PluginPath +
+        ' (existing DLL is not an unchanged NLSI-managed file; it was not replaced)';
+    end;
+    if DirExists(ATSX86Directory) and FileExists(ATSX86PluginPath) and
+       not PluginCanBeReplaced(ATSX86PluginPath) then
+    begin
+      if SkippedPluginTargets <> '' then
+        SkippedPluginTargets := SkippedPluginTargets + Chr(13) + Chr(10);
+      SkippedPluginTargets := SkippedPluginTargets + ATSX86PluginPath +
+        ' (existing DLL is not an unchanged NLSI-managed file; it was not replaced)';
+    end;
     RemoveObsoleteManagedFiles;
     if ETS2RootPath = '' then
     begin
@@ -611,6 +672,15 @@ begin
       MsgBox('These plugin targets were skipped because a game or architecture directory was unavailable, or to protect existing files:' +
         Chr(13) + Chr(10) + Chr(13) + Chr(10) + SkippedPluginTargets, mbInformation, MB_OK);
   end;
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  BrowserErrorCode: Integer;
+begin
+  Result := True;
+  if (CurPageID = wpFinished) and TikTokFollowCheck.Checked then
+    ShellExec('open', TikTokProfileUrl, '', '', SW_SHOWNORMAL, ewNoWait, BrowserErrorCode);
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

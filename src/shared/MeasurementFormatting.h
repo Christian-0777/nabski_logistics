@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include <QString>
 
 #include "UserPreferences.h"
@@ -24,6 +26,7 @@ QString formatSpeed(double value, const QString& sourceUnit, const UserPreferenc
 QString formatDistance(double value, const QString& sourceUnit, const UserPreferences& preferences);
 QString formatVolume(double liters, const UserPreferences& preferences, int decimals = 2);
 QString formatCurrencyAmount(double value, const QString& denomination,
-                             const UserPreferences& preferences);
+                             const UserPreferences& preferences,
+                             std::optional<double> eurUsdRate = std::nullopt);
 
 } // namespace nlsi
