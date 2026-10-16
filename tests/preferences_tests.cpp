@@ -97,6 +97,15 @@ int main(int argc, char** argv)
     QCoreApplication app(argc, argv);
     bool ok = true;
 
+    for (const QString& role : {"DRIVER", "MANAGER", "CEO", "ADMIN"})
+    {
+        ok = check(nlsi::isSupportedAccountRole(role),
+                   "the supported server account roles are recognized") && ok;
+    }
+    ok = check(!nlsi::isSupportedAccountRole("OWNER") &&
+                   !nlsi::isSupportedAccountRole("admin"),
+               "unknown or noncanonical account roles are rejected") && ok;
+
     ok = check(approximatelyEqual(nlsi::kilometresPerHourToMilesPerHour(1.0), 0.621371192237334),
                "km/h to mph uses the specified conversion factor") && ok;
     ok = check(approximatelyEqual(nlsi::milesPerHourToKilometresPerHour(0.621371192237334), 1.0),
@@ -268,6 +277,7 @@ int main(int argc, char** argv)
         ok = check(apiProtectedProfile.open(QIODevice::ReadOnly) &&
                    !apiProtectedProfile.readAll().contains(savedApi.apiKey.toUtf8()),
                    "API key is never stored in plaintext in profile.nlsi") && ok;
+        apiProtectedProfile.close();
         ok = check(preservationStore.loadApiSettings(loadedApi, &error) &&
                    loadedApi.baseUrl == "https://example.com/xtian_tools/nlsi-api" &&
                    loadedApi.apiKey == savedApi.apiKey &&
@@ -279,6 +289,25 @@ int main(int argc, char** argv)
                    decryptedProfile.value("preferences").toObject().value("eur_to_usd_rate").toDouble() ==
                        1.09,
                    "saving API settings preserves unrelated profile and preference fields") && ok;
+        const QString clientInstanceId = savedApi.clientInstanceId;
+        ok = check(preservationStore.removeApiCredentials(&error) && error.isEmpty(),
+                   "removing API credentials updates the encrypted profile successfully") && ok;
+        ok = check(preservationStore.loadApiSettings(loadedApi, &error) &&
+                   loadedApi.baseUrl.isEmpty() && loadedApi.apiKey.isEmpty() &&
+                   loadedApi.clientInstanceId == clientInstanceId,
+                   "removed API credentials do not load while the stable local client identity remains") && ok;
+        ok = check(readEncryptedProfile(preservationPath, decryptedProfile) &&
+                   !decryptedProfile.value("api").toObject().contains("base_url") &&
+                   !decryptedProfile.value("api").toObject().contains("key") &&
+                   decryptedProfile.value("api").toObject().value("client_instance_id").toString() ==
+                       clientInstanceId &&
+                   decryptedProfile.value("api").toObject().value("future_setting").toString() ==
+                       "keep-me" &&
+                   decryptedProfile.value("account").toObject().value("id").toString() ==
+                       "opaque-profile-field" &&
+                   decryptedProfile.value("preferences").toObject().value("eur_to_usd_rate").toDouble() ==
+                       1.09,
+                   "removing credentials preserves profile, preferences, client identity, and unknown settings") && ok;
 
         const QString invalidPreferencesPath = temporaryDirectory.filePath("invalid-preferences.nlsi");
         QJsonObject invalidPreferences;

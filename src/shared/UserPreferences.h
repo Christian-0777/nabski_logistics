@@ -46,6 +46,7 @@ struct ApiSettings
 
 bool isValidPreferences(const UserPreferences& preferences);
 bool normalizeApiBaseUrl(const QString& value, QString& normalized, QString* error = nullptr);
+bool isSupportedAccountRole(const QString& role);
 
 class ProfileStore
 {
@@ -57,6 +58,7 @@ public:
     bool loadApiSettings(ApiSettings& settings, QString* error = nullptr) const;
     bool save(const UserPreferences& preferences, QString* error = nullptr) const;
     bool saveApiSettings(const ApiSettings& settings, QString* error = nullptr) const;
+    bool removeApiCredentials(QString* error = nullptr) const;
 
 private:
     QString filePath_;

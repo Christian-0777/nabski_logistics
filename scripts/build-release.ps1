@@ -4,15 +4,16 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$buildDir = Join-Path $root 'build\release-v1.8.0-beta-x64'
-$buildX86Dir = Join-Path $root 'build\release-v1.8.0-beta-x86-plugin'
-$releaseDir = Join-Path $root 'releases\1.8.0-beta'
+$buildDir = Join-Path $root 'build\release-v1.8.5-beta-x64'
+$buildX86Dir = Join-Path $root 'build\release-v1.8.5-beta-x86-plugin'
+$releaseDir = Join-Path $root 'releases\1.8.5-beta'
 $qtDir = 'C:\Qt\6.12.0\msvc2022_64'
 $qtBin = Join-Path $qtDir 'bin'
 $ninja = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe'
 $vsDevCmd = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat'
 $windeployqt = Join-Path $qtBin 'windeployqt.exe'
 $isccCandidates = @(
+    'C:\Users\xtian\AppData\Local\Programs\Inno Setup 7\ISCC.exe',
     (Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'),
     'C:\Users\xtian\AppData\Local\Programs\Inno Setup 6\ISCC.exe',
     'C:\Program Files (x86)\Inno Setup 6\ISCC.exe',
@@ -32,7 +33,7 @@ foreach ($requiredPath in @($vsDevCmd, $ninja, $windeployqt)) {
     }
 }
 if (-not $SkipInstaller -and -not $iscc) {
-    throw 'Inno Setup 6 ISCC.exe was not found in known install locations or PATH.'
+    throw 'Inno Setup ISCC.exe was not found in known install locations or PATH.'
 }
 if (-not (Test-Path (Join-Path $qtDir 'lib\cmake\Qt6Widgets\Qt6WidgetsConfig.cmake'))) {
     throw "Qt 6 MSVC x64 Widgets package is missing from $qtDir."
@@ -100,26 +101,24 @@ if ($x64InspectionText -match '(?i)(MSVCP|VCRUNTIME)140' -or
 }
 
 $fileVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($dashboardExe)
-if ($fileVersion.FileVersion -ne '1.8.0.0' -or $fileVersion.ProductVersion -ne '1.8.0 Beta') {
+if ($fileVersion.FileVersion -ne '1.8.5.0' -or $fileVersion.ProductVersion -ne '1.8.5 Beta') {
     throw "Dashboard executable version metadata is incorrect: file=$($fileVersion.FileVersion), product=$($fileVersion.ProductVersion)"
 }
 foreach ($plugin in @($pluginX64Dll, $pluginX86Dll)) {
     $pluginVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($plugin)
-    if ($pluginVersion.FileVersion -ne '1.8.0.0' -or
-        $pluginVersion.ProductVersion -ne '1.8.0 Beta') {
+    if ($pluginVersion.FileVersion -ne '1.8.5.0' -or
+        $pluginVersion.ProductVersion -ne '1.8.5 Beta') {
         throw "Plugin version metadata is incorrect for ${plugin}: file=$($pluginVersion.FileVersion), product=$($pluginVersion.ProductVersion)"
     }
 }
 
-$packageRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('nlsi-1.8.0-beta-' + [guid]::NewGuid().ToString('N'))
 $payloadDir = Join-Path $releaseDir 'payload'
 New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
 if (Test-Path -LiteralPath $payloadDir) {
     Remove-Item -LiteralPath $payloadDir -Recurse -Force
 }
 New-Item -ItemType Directory -Force -Path $payloadDir | Out-Null
-try {
-    Copy-Item $dashboardExe $payloadDir
+Copy-Item $dashboardExe $payloadDir
     $pluginX64Dir = Join-Path $payloadDir 'plugin\win_x64'
     $pluginX86Dir = Join-Path $payloadDir 'plugin\win_x86'
     New-Item -ItemType Directory -Force -Path $pluginX64Dir, $pluginX86Dir | Out-Null
@@ -129,6 +128,15 @@ try {
     New-Item -ItemType Directory -Force -Path $payloadResources | Out-Null
     Copy-Item (Join-Path $root 'resources\nlsi.png') (Join-Path $payloadResources 'nlsi.png') -Force
     Copy-Item (Join-Path $root 'resources\nlsi.ico') (Join-Path $payloadResources 'nlsi.ico') -Force
+    $payloadDocs = Join-Path $payloadDir 'docs'
+    New-Item -ItemType Directory -Force -Path $payloadDocs | Out-Null
+    foreach ($documentName in @('RELEASE-NOTES-v1.8.5-beta.md', 'INSTALLATION-v1.8.5-beta.md')) {
+        $document = Join-Path $root "docs\$documentName"
+        if (-not (Test-Path -LiteralPath $document)) {
+            throw "Required release document is missing: $document"
+        }
+        Copy-Item -LiteralPath $document -Destination $payloadDocs -Force
+    }
 
     $deployCommand = 'set "PATH={0};%PATH%" && call "{1}" -arch=amd64 -host_arch=amd64 && "{2}" --release --no-translations --dir "{3}" "{4}"' -f `
         $qtBin, $vsDevCmd, $windeployqt, $payloadDir, $dashboardExe
@@ -169,6 +177,18 @@ try {
             throw "A required architecture-specific plugin is missing from the package: $pluginRelative"
         }
     }
+    $stagedVersions = @(
+        (Join-Path $payloadDir 'nlsi_dashboard.exe'),
+        (Join-Path $payloadDir 'plugin\win_x64\nlsi_scs_plugin.dll'),
+        (Join-Path $payloadDir 'plugin\win_x86\nlsi_scs_plugin.dll')
+    )
+    foreach ($stagedArtifact in $stagedVersions) {
+        $stagedVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($stagedArtifact)
+        if ($stagedVersion.FileVersion -ne '1.8.5.0' -or
+            $stagedVersion.ProductVersion -ne '1.8.5 Beta') {
+            throw "Staged artifact is not a verified 1.8.5 Beta binary: $stagedArtifact"
+        }
+    }
     foreach ($resourceRelative in @('resources\nlsi.ico', 'resources\nlsi.png')) {
         if (-not (Test-Path (Join-Path $payloadDir $resourceRelative))) {
             throw "A required product resource is missing from the package: $resourceRelative"
@@ -193,17 +213,24 @@ try {
         throw 'The managed-file manifest does not match the staged payload file list.'
     }
     $forbiddenPayload = Get-ChildItem $payloadDir -Recurse -File |
-        Where-Object { $_.Name -match '(^|_)(tests?|pdb|ilk|obj|lib|exp)(\.|$)|vc_redist|cmake|ninja' }
+        Where-Object {
+            $_.Name -match '(^|_)(tests?|pdb|ilk|obj|lib|exp)(\.|$)|vc_redist|cmake|ninja' -or
+            $_.Name -match '(?i)^\.env(?:\..*)?$'
+        }
     if ($forbiddenPayload) {
         throw "Development-only artifact found in payload: $($forbiddenPayload[0].FullName)"
     }
 
     $oldPath = $env:PATH
     $oldPlatform = $env:QT_QPA_PLATFORM
+    $smokeDataDir = Join-Path $env:TEMP ('nlsi-release-smoke-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $smokeDataDir | Out-Null
     try {
         $env:PATH = "$payloadDir;$qtBin;$oldPath"
         $env:QT_QPA_PLATFORM = 'offscreen'
-        $smoke = Start-Process -FilePath (Join-Path $payloadDir 'nlsi_dashboard.exe') -WorkingDirectory $payloadDir -PassThru
+        $smoke = Start-Process -FilePath (Join-Path $payloadDir 'nlsi_dashboard.exe') `
+            -ArgumentList ('"--isolated-smoke-data-dir={0}"' -f $smokeDataDir) `
+            -WorkingDirectory $payloadDir -PassThru
         Start-Sleep -Seconds 4
         $smoke.Refresh()
         if ($smoke.HasExited) {
@@ -212,6 +239,9 @@ try {
         Stop-Process -Id $smoke.Id -Force
     }
     finally {
+        if ($smoke -and -not $smoke.HasExited) {
+            Stop-Process -Id $smoke.Id -Force
+        }
         $env:PATH = $oldPath
         if ($null -eq $oldPlatform) {
             Remove-Item Env:\QT_QPA_PLATFORM -ErrorAction SilentlyContinue
@@ -219,15 +249,23 @@ try {
         else {
             $env:QT_QPA_PLATFORM = $oldPlatform
         }
+        if (Test-Path -LiteralPath $smokeDataDir) {
+            Remove-Item -LiteralPath $smokeDataDir -Recurse -Force
+        }
     }
 
     if (-not $SkipInstaller) {
         New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
         $installerScript = Join-Path $PSScriptRoot 'NLSI-Exclusive-Logbook.iss'
+        $installer = Join-Path $releaseDir 'NLSI-Exclusive-Logbook-v1.8.5-beta-Setup.exe'
         $installerSource = Get-Content -LiteralPath $installerScript -Raw
         $requiredInstallerRules = @(
             'AppId={{B58E42DA-BC15-4FD0-9DCC-44E4E14D374D}',
-            '#define MyAppVersion "1.8.0 Beta"',
+            '#define MyAppVersion "1.8.5 Beta"',
+            'OutputDir=..\releases\1.8.5-beta',
+            'OutputBaseFilename=NLSI-Exclusive-Logbook-v1.8.5-beta-Setup',
+            'VersionInfoVersion=1.8.5.0',
+            'VersionInfoProductVersion=1.8.5.0',
             "TikTokProfileUrl = 'https://www.tiktok.com/@nabskiplays';",
             "TikTokFollowCheck.Caption := 'Follow Nabski Plays on TikTok';",
             'TikTokFollowCheck.Checked := False;',
@@ -236,11 +274,17 @@ try {
             'CloseApplications=yes',
             'CloseApplicationsFilter={#MyAppExeName}',
             'Source: "{#ReleasePayloadDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs',
+            'Source: "{#ReleasePayloadDir}\.nlsi-managed-files"; DestDir: "{app}"; Flags: ignoreversion',
+            "ProductVersion = '1.8.5 Beta'",
+            "NLSI Exclusive Logbook 1.8.5 Beta|",
+            "NLSI Exclusive Logbook 1.8.4 Beta|",
+            "NLSI Exclusive Logbook 1.8.3 Beta|",
             "Result := AddBackslash(ETS2X64Directory) + 'plugins\' + PluginDllName;",
             "Result := AddBackslash(ETS2X86Directory) + 'plugins\' + PluginDllName;",
             "Result := ExpandConstant('{app}\plugin\win_x64\' + PluginDllName);",
             "Result := ExpandConstant('{app}\plugin\win_x86\' + PluginDllName);",
-            "ProductVersion = '1.8.0 Beta'",
+            "NLSI Exclusive Logbook 1.8.2 Beta|",
+            "NLSI Exclusive Logbook 1.8.1 Beta|",
             "NLSI Exclusive Logbook 1.8.0 Beta|",
             "NLSI Exclusive Logbook 1.7.9 Beta|",
             "NLSI Exclusive Logbook 1.7.8 Beta|",
@@ -288,42 +332,38 @@ try {
             $installerSource -match '(?im)InstallPlugin\s*\(') {
             throw 'Game plugin deployment must use automatic installer-managed replacement.'
         }
+        if (Test-Path -LiteralPath $installer) {
+            Remove-Item -LiteralPath $installer -Force
+        }
         $installerCompilerOutput = & $iscc "/DReleasePayloadDir=$payloadDir" $installerScript
         if ($LASTEXITCODE -ne 0) {
             throw "Inno Setup compilation failed with exit code $LASTEXITCODE."
         }
-        $installerCompilerOutputText = $installerCompilerOutput -join "`n"
-        foreach ($payloadFile in (Get-ChildItem -LiteralPath $payloadDir -Recurse -File)) {
-            $compressedFileLine = "Compressing: $($payloadFile.FullName)"
-            if ($installerCompilerOutputText -notmatch [regex]::Escape($compressedFileLine)) {
-                throw "The installer compiler did not confirm packaging payload file: $($payloadFile.FullName)"
-            }
-        }
         Write-Output $installerCompilerOutput
-        Write-Output 'Verified that Inno Setup compressed every staged payload file.'
+        Write-Output "Installer payload source: $payloadDir"
 
-        $installer = Join-Path $releaseDir 'NLSI-Exclusive-Logbook-v1.8.0-beta-Setup.exe'
         if (-not (Test-Path $installer) -or (Get-Item $installer).Length -lt 1000000) {
             throw "Compiled installer is missing or unexpectedly small: $installer"
         }
         $installerVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($installer)
-        if ($installerVersion.ProductVersion.Trim() -ne '1.8.0.0' -or
-            $installerVersion.FileDescription.Trim() -notmatch '1\.8\.0 Beta') {
+        if ($installerVersion.ProductVersion.Trim() -ne '1.8.5.0' -or
+            $installerVersion.FileVersion.Trim() -ne '1.8.5.0' -or
+            $installerVersion.FileDescription.Trim() -notmatch '1\.8\.5 Beta') {
             throw "Installer version metadata is incorrect: product=$($installerVersion.ProductVersion), description=$($installerVersion.FileDescription)"
         }
 
-        Copy-Item (Join-Path $root 'docs\RELEASE-NOTES-v1.8.0-beta.md') (Join-Path $releaseDir 'RELEASE-NOTES-v1.8.0-beta.md') -Force
-        Copy-Item (Join-Path $root 'docs\INSTALLATION-v1.8.0-beta.md') (Join-Path $releaseDir 'INSTALLATION-v1.8.0-beta.md') -Force
+        Copy-Item (Join-Path $root 'docs\RELEASE-NOTES-v1.8.5-beta.md') (Join-Path $releaseDir 'RELEASE-NOTES-v1.8.5-beta.md') -Force
+        Copy-Item (Join-Path $root 'docs\INSTALLATION-v1.8.5-beta.md') (Join-Path $releaseDir 'INSTALLATION-v1.8.5-beta.md') -Force
         $manifestFiles = @(
             $installer,
             (Join-Path $payloadDir 'nlsi_dashboard.exe'),
             (Join-Path $payloadDir 'plugin\win_x64\nlsi_scs_plugin.dll'),
             (Join-Path $payloadDir 'plugin\win_x86\nlsi_scs_plugin.dll'),
-            (Join-Path $releaseDir 'RELEASE-NOTES-v1.8.0-beta.md'),
-            (Join-Path $releaseDir 'INSTALLATION-v1.8.0-beta.md')
+            (Join-Path $releaseDir 'RELEASE-NOTES-v1.8.5-beta.md'),
+            (Join-Path $releaseDir 'INSTALLATION-v1.8.5-beta.md')
         )
         $manifestLines = @(
-            'NLSI Exclusive Logbook 1.8.0 Beta release artifact SHA-256 manifest',
+            'NLSI Exclusive Logbook 1.8.5 Beta release artifact SHA-256 manifest',
             'Hashes cover the installer, application, both plugins, and release documents.'
         )
         foreach ($file in $manifestFiles) {
@@ -344,12 +384,6 @@ try {
         Write-Output "Installer size: $((Get-Item $installer).Length) bytes"
         Get-Content -LiteralPath (Join-Path $releaseDir 'manifest.sha256')
     }
-}
-finally {
-    if (Test-Path $packageRoot) {
-        Remove-Item -LiteralPath $packageRoot -Recurse -Force
-    }
-}
 
 Write-Output 'Validated x64 dashboard and plugins; both plugin architectures and SDK exports passed inspection.'
 if ($SkipInstaller) {

@@ -41,6 +41,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QMessageBox>
+#include <QRegularExpression>
 #include <QSizePolicy>
 #include <QScrollArea>
 #include <QStackedWidget>
@@ -65,17 +66,11 @@ namespace {
 const QString unavailable = QString::fromUtf8("—");
 const QString profileUnavailable = "Not connected";
 
-QString rankForDistance(double distanceKm)
+bool isSupportedDriverRank(const QString& rank)
 {
-    if (distanceKm >= 1000000.0) return "Mythic";
-    if (distanceKm >= 500000.0) return "Ultimate";
-    if (distanceKm >= 250000.0) return "Master";
-    if (distanceKm >= 100000.0) return "Legend";
-    if (distanceKm >= 50000.0) return "Expert";
-    if (distanceKm >= 25000.0) return "Veteran";
-    if (distanceKm >= 15000.0) return "Elder";
-    if (distanceKm >= 5000.0) return "Driver";
-    return "Trainee";
+    return rank == "Trainee" || rank == "Driver" || rank == "Elder" ||
+        rank == "Veteran" || rank == "Expert" || rank == "Legend" ||
+        rank == "Master" || rank == "Ultimate" || rank == "Mythic";
 }
 
 double rankLowerThreshold(const QString& rank)
@@ -143,6 +138,173 @@ QUrl apiEndpointUrl(const QString& baseUrl, const QString& endpoint)
     }
     url.setPath(path + endpoint);
     return url;
+}
+
+void addNgrokWarningBypassHeader(QNetworkRequest& request)
+{
+    const QString host = request.url().host().toLower();
+    if (host == "ngrok-free.dev" || host.endsWith(".ngrok-free.dev") ||
+        host == "ngrok-free.app" || host.endsWith(".ngrok-free.app") ||
+        host.endsWith(".ngrok.io"))
+    {
+        request.setRawHeader("ngrok-skip-browser-warning", "1");
+    }
+}
+
+bool hasJsonContentType(const QNetworkReply* reply)
+{
+    const QString contentType = reply->header(QNetworkRequest::ContentTypeHeader)
+        .toString().section(';', 0, 0).trimmed().toLower();
+    return contentType == "application/json" || contentType.endsWith("+json");
+}
+
+QString safeApiUrl(QUrl url)
+{
+    url.setUserInfo(QString());
+    QUrlQuery query(url);
+    if (!query.isEmpty())
+    {
+        QList<QPair<QString, QString>> safeItems;
+        for (const auto& item : query.queryItems(QUrl::FullyDecoded))
+        {
+            const QString key = item.first.toLower();
+            safeItems.append({item.first,
+                key == "limit" || key == "offset" ? item.second : "[REDACTED]"});
+        }
+        query.setQueryItems(safeItems);
+        url.setQuery(query);
+    }
+    return url.toString(QUrl::FullyEncoded);
+}
+
+bool sensitiveApiJsonKey(const QString& key)
+{
+    const QString normalized = key.toLower();
+    return normalized.contains("key") || normalized.contains("token") ||
+        normalized.contains("secret") || normalized.contains("password") ||
+        normalized.contains("authorization") || normalized.contains("cookie") ||
+        normalized == "username" || normalized == "email" ||
+        normalized == "display_name" || normalized.endsWith("_id") ||
+        normalized == "records" || normalized == "jobs";
+}
+
+QJsonValue redactApiJson(const QJsonValue& value, const QString& key = QString())
+{
+    if (!key.isEmpty() && sensitiveApiJsonKey(key))
+    {
+        if ((key == "records" || key == "jobs") && value.isArray())
+        {
+            return QString("[REDACTED: %1 records]").arg(value.toArray().size());
+        }
+        return QString("[REDACTED]");
+    }
+    if (value.isObject())
+    {
+        QJsonObject redacted;
+        const QJsonObject object = value.toObject();
+        for (auto item = object.constBegin(); item != object.constEnd(); ++item)
+        {
+            redacted.insert(item.key(), redactApiJson(item.value(), item.key()));
+        }
+        return redacted;
+    }
+    if (value.isArray())
+    {
+        QJsonArray redacted;
+        for (const QJsonValue& item : value.toArray())
+        {
+            redacted.append(redactApiJson(item));
+        }
+        return redacted;
+    }
+    return value;
+}
+
+QString apiResponseShape(const QByteArray& responseBytes)
+{
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(responseBytes, &parseError);
+    if (parseError.error != QJsonParseError::NoError)
+    {
+        return responseBytes.trimmed().isEmpty() ? "empty body" : "non-JSON body";
+    }
+    if (document.isObject())
+    {
+        QStringList keys = document.object().keys();
+        keys.sort();
+        return "JSON object keys=[" + keys.join(",") + "]";
+    }
+    if (document.isArray())
+    {
+        return QString("JSON array (%1 entries)").arg(document.array().size());
+    }
+    return "JSON scalar";
+}
+
+QString safeApiBodyExcerpt(const QByteArray& responseBytes, const QString& apiKey)
+{
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(responseBytes, &parseError);
+    if (parseError.error == QJsonParseError::NoError && document.isObject())
+    {
+        return QString::fromUtf8(QJsonDocument(
+            redactApiJson(document.object()).toObject()).toJson(QJsonDocument::Compact)
+            .left(512));
+    }
+    if (parseError.error == QJsonParseError::NoError && document.isArray())
+    {
+        return QString::fromUtf8(QJsonDocument(
+            redactApiJson(document.array()).toArray()).toJson(QJsonDocument::Compact)
+            .left(512));
+    }
+
+    QString excerpt = QString::fromUtf8(responseBytes.left(2048));
+    if (!apiKey.isEmpty())
+    {
+        excerpt.replace(apiKey, "[REDACTED]");
+    }
+    excerpt.replace(QRegularExpression(
+        "(?i)(bearer\\s+)[A-Za-z0-9._~+/-]+=*"), "\\1[REDACTED]");
+    excerpt.replace(QRegularExpression(
+        "(?i)((?:password|passwd|secret|token|api[_-]?key)\\s*[=:]\\s*)[^\\s<>\"']+"),
+        "\\1[REDACTED]");
+    excerpt.replace(QRegularExpression("\\s+"), " ");
+    return excerpt.left(512);
+}
+
+void logApiResponseFailure(QNetworkReply* reply, const QByteArray& responseBytes,
+                           const QString& configuredBaseUrl, const QString& apiKey,
+                           const QString& expectedSchema)
+{
+    if (!reply)
+    {
+        return;
+    }
+    const QUrl configuredUrl = reply->request().url();
+    const QUrl responseUrl = reply->url();
+    const QString location = QString::fromUtf8(reply->rawHeader("Location"));
+    const QString contentType = reply->header(QNetworkRequest::ContentTypeHeader)
+        .toString().trimmed();
+    const QString method = reply->operation() == QNetworkAccessManager::PostOperation
+        ? "POST"
+        : reply->operation() == QNetworkAccessManager::GetOperation ? "GET" : "OTHER";
+    const QString redirect = location.isEmpty()
+        ? "[none]"
+        : safeApiUrl(responseUrl.resolved(QUrl(location)));
+    const QStringList details = {
+        "configured_base=" + safeApiUrl(QUrl(configuredBaseUrl)),
+        "request_url=" + safeApiUrl(configuredUrl),
+        "response_url=" + safeApiUrl(responseUrl),
+        "method=" + method,
+        "status=" + QString::number(reply->attribute(
+            QNetworkRequest::HttpStatusCodeAttribute).toInt()),
+        "redirect_location=" + redirect,
+        "content_type=" + (contentType.isEmpty() ? "[none]" : contentType),
+        "expected=" + expectedSchema,
+        "actual=" + apiResponseShape(responseBytes),
+        "body_redacted=" + safeApiBodyExcerpt(responseBytes, apiKey),
+    };
+    qWarning().noquote() << "NLSI API response failure:" << details.join(' ');
 }
 
 bool parseDoubleValue(const QString& text, double& value)
@@ -645,7 +807,7 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
     const bool profileLoaded = profileStore_.load(preferences_, &profileError);
     const bool apiSettingsLoaded = profileStore_.loadApiSettings(apiSettings_, &apiSettingsLoadError_);
     networkManager_ = new QNetworkAccessManager(this);
-    setWindowTitle("NLSI Exclusive Logbook 1.8.0 Beta");
+    setWindowTitle("NLSI Exclusive Logbook 1.8.5 Beta");
     const QString iconPath = QFileInfo(QDir::currentPath(), "resources/nlsi.ico").exists()
         ? QDir::currentPath() + "/resources/nlsi.ico"
         : QCoreApplication::applicationDirPath() + "/resources/nlsi.ico";
@@ -737,7 +899,7 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
     statusBar->setStyleSheet(
         "QStatusBar { background: #FFF7FA; border-top: 1px solid #FFD1E6; color: #665B62; font: 700 10px 'Segoe UI'; padding: 0 8px; }"
     );
-    statusBar->showMessage("LOCAL TELEMETRY • VERSION 1.8.0 BETA");
+    statusBar->showMessage("LOCAL TELEMETRY • VERSION 1.8.5 BETA");
     setStatusBar(statusBar);
     if (!jobHistory_.errorString().isEmpty())
     {
@@ -764,14 +926,14 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
         }
     }
     refreshCompletedJobs();
-    updateApiConnectionState(false,
+    updateApiConnectionState(ApiConnectionState::LocalMode,
         "Not connected. The API must be reachable and the configured driver key must authenticate.");
     const bool apiConfigured = !apiSettings_.baseUrl.trimmed().isEmpty() &&
         !apiSettings_.apiKey.trimmed().isEmpty();
     if (!apiConfigured)
     {
         setProfileUnavailable(apiSettingsLoadError_.isEmpty()
-            ? "Configure your API URL and key in Settings to connect."
+            ? "Not connected. Configure your API URL and key in Settings to connect."
             : "Saved API settings could not be loaded. Check the encrypted profile.");
     }
     else
@@ -926,7 +1088,7 @@ void DashboardMainWindow::buildSidebar()
     footerDivider->setFrameShadow(QFrame::Plain);
     footerDivider->setStyleSheet("QFrame { color: #FFD1E6; background: #FFD1E6; max-height: 1px; }");
     layout->addWidget(footerDivider);
-    auto* version = new QLabel("1.8.0 BETA", sidebar_);
+    auto* version = new QLabel("1.8.5 BETA", sidebar_);
     version->setObjectName("sidebarSubtitle");
     layout->addWidget(version);
 }
@@ -946,13 +1108,13 @@ void DashboardMainWindow::buildContent()
     titleRow->setSpacing(8);
     headerTitle_ = new QLabel("DASHBOARD", header);
     headerTitle_->setObjectName("headerTitle");
-    auto* mode = new QLabel("LOCAL MODE", header);
-    mode->setObjectName("headerMode");
+    connectionModeLabel_ = new QLabel("LOCAL MODE", header);
+    connectionModeLabel_->setObjectName("headerMode");
     dateLabel_ = new QLabel(header);
     dateLabel_->setObjectName("headerMeta");
     dateLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     titleRow->addWidget(headerTitle_);
-    titleRow->addWidget(mode);
+    titleRow->addWidget(connectionModeLabel_);
     titleRow->addStretch();
     titleRow->addWidget(dateLabel_);
     headerLayout->addLayout(titleRow);
@@ -1221,8 +1383,11 @@ void DashboardMainWindow::buildContent()
     saveApiSettingsButton_->setObjectName("saveApiSettingsButton");
     testApiConnectionButton_ = new QPushButton("TEST CONNECTION", configPage);
     testApiConnectionButton_->setObjectName("testApiConnectionButton");
+    removeApiConfigurationButton_ = new QPushButton("REMOVE API CONFIGURATION", configPage);
+    removeApiConfigurationButton_->setObjectName("removeApiConfigurationButton");
     configActions->addWidget(saveApiSettingsButton_);
     configActions->addWidget(testApiConnectionButton_);
+    configActions->addWidget(removeApiConfigurationButton_);
     apiConfigLayout->addWidget(configPanel);
     apiConfigLayout->addLayout(configActions);
     apiConfigLayout->addStretch();
@@ -1469,6 +1634,8 @@ void DashboardMainWindow::buildContent()
             this, [this]() { saveApiSettingsFromForm(); });
     connect(testApiConnectionButton_, &QPushButton::clicked,
             this, &DashboardMainWindow::testApiConnection);
+    connect(removeApiConfigurationButton_, &QPushButton::clicked,
+            this, &DashboardMainWindow::removeApiConfiguration);
     connect(refreshProfileButton_, &QPushButton::clicked,
             this, &DashboardMainWindow::refreshAccountProfile);
     connect(profileUsernameCopyButton_, &QPushButton::clicked, this, [this]()
@@ -1572,7 +1739,7 @@ void DashboardMainWindow::savePreferences()
     refreshCompletedJobs();
     if (profileQualifyingDistanceKm_)
     {
-        updateProfileRank(*profileQualifyingDistanceKm_);
+        updateProfileRank(authenticatedRank_, *profileQualifyingDistanceKm_);
     }
     statusBar()->showMessage("PREFERENCES SAVED.");
 }
@@ -1605,14 +1772,9 @@ bool DashboardMainWindow::saveApiSettingsFromForm()
     apiSettingsLoadError_.clear();
     if (credentialsChanged)
     {
-        updateApiConnectionState(false,
-            "Credentials changed. Authenticate the configured account to reconnect.");
-        authenticatedDriverId_ = 0;
-        syncDriverId_ = 0;
-        syncRequestInFlight_ = false;
-        remoteCompletedJobs_.clear();
-        setProfileUnavailable("Credentials changed. Refresh the profile to authenticate this account.");
-        refreshCompletedJobs();
+        const QString message =
+            "Credentials changed. Refresh the profile to authenticate this account.";
+        clearAuthenticatedAccount(message, message);
     }
     apiUrlInput_->setText(apiSettings_.baseUrl);
     apiKeyInput_->setText(apiSettings_.apiKey);
@@ -1623,20 +1785,60 @@ bool DashboardMainWindow::saveApiSettingsFromForm()
     return true;
 }
 
+void DashboardMainWindow::removeApiConfiguration()
+{
+    const QMessageBox::StandardButton answer = QMessageBox::warning(
+        this,
+        "Remove API Configuration",
+        "This removes the saved API URL and key from this computer only. "
+        "It does not revoke or delete the server-side key. "
+        "Your local jobs, event history, preferences, and profile data will be kept. "
+        "Remove the local API configuration?",
+        QMessageBox::Yes | QMessageBox::Cancel,
+        QMessageBox::Cancel);
+    if (answer != QMessageBox::Yes)
+    {
+        return;
+    }
+
+    QString error;
+    if (!profileStore_.removeApiCredentials(&error))
+    {
+        const QString message = "The local API configuration could not be removed: " + error;
+        apiConfigStatus_->setText(message);
+        statusBar()->showMessage(uppercaseDisplayText(message));
+        QMessageBox::critical(this, "Could Not Remove API Configuration", message);
+        return;
+    }
+
+    apiSettings_.baseUrl.clear();
+    apiSettings_.apiKey.clear();
+    apiSettingsLoadError_.clear();
+    apiUrlInput_->clear();
+    apiKeyInput_->clear();
+    const QString message = "Not connected. Local API configuration removed; "
+        "the server-side key has not been revoked.";
+    clearAuthenticatedAccount(message, message);
+    apiConfigStatus_->setText(message);
+    statusBar()->showMessage(
+        "LOCAL API CONFIGURATION REMOVED. SERVER-SIDE KEY IS UNCHANGED.");
+}
+
 void DashboardMainWindow::testApiConnection()
 {
     if (apiUrlInput_->text().trimmed().isEmpty() || apiKeyInput_->text().trimmed().isEmpty())
     {
-        updateApiConnectionState(false,
-            "Configure both the API URL and driver API key before connecting.");
-        apiConfigStatus_->setText("Configure your API URL and key in Settings to connect.");
-        setProfileUnavailable("Configure your API URL and key in Settings to connect.");
+        const QString message =
+            "Not connected. Configure both the API URL and driver API key before connecting.";
+        clearAuthenticatedAccount(message, message);
+        apiConfigStatus_->setText(message);
         statusBar()->showMessage("API URL AND DRIVER KEY ARE REQUIRED.");
         return;
     }
     if (!saveApiSettingsFromForm())
     {
-        updateApiConnectionState(false, "The configured API URL is invalid or unavailable.");
+        updateApiConnectionState(ApiConnectionState::LocalMode,
+                                 "The configured API URL is invalid or unavailable.");
         return;
     }
 
@@ -1649,32 +1851,111 @@ void DashboardMainWindow::refreshAccountProfile()
     requestAccountProfile(false);
 }
 
-void DashboardMainWindow::updateApiConnectionState(bool online, const QString& explanation)
+void DashboardMainWindow::updateApiConnectionState(ApiConnectionState state,
+                                                   const QString& explanation,
+                                                   bool transportReachable)
 {
-    apiOnline_ = online;
+    apiOnline_ = state == ApiConnectionState::Online;
+    apiTransportReachable_ = apiOnline_ || transportReachable;
     if (connectionModeLabel_)
     {
-        connectionModeLabel_->setText(online ? "ONLINE" : "LOCAL MODE");
-        connectionModeLabel_->setToolTip(explanation);
-        connectionModeLabel_->setStyleSheet(online
-            ? "font: 700 10px 'Segoe UI'; color: #1C8059; background: #E4F6EC; "
-                "border-radius: 8px; padding: 3px 8px;"
-            : "font: 700 10px 'Segoe UI'; color: #A15E7D; background: #FDEBF3; "
-                "border-radius: 8px; padding: 3px 8px;");
+        QString text;
+        QString style;
+        switch (state)
+        {
+        case ApiConnectionState::Online:
+            text = "ONLINE";
+            style = "color: #1C8059; background: #E4F6EC;";
+            break;
+        case ApiConnectionState::Authenticating:
+            text = "AUTHENTICATING";
+            style = "color: #805F16; background: #FFF4D6;";
+            break;
+        case ApiConnectionState::Offline:
+            text = "OFFLINE";
+            style = "color: #A13D43; background: #FDEBEC;";
+            break;
+        case ApiConnectionState::LocalMode:
+            text = "LOCAL MODE";
+            style = "color: #A15E7D; background: #FDEBF3;";
+            break;
+        }
+        const QString transport = apiTransportReachable_
+            ? "API transport reachable."
+            : "API transport unavailable or not verified.";
+        const QString authentication = authenticatedDriverId_ > 0 && profileDataAvailable_
+            ? "A server-verified account profile is active."
+            : "No server-verified account is active.";
+        connectionModeLabel_->setText(text);
+        connectionModeLabel_->setToolTip(
+            explanation + " " + transport + " " + authentication);
+        connectionModeLabel_->setStyleSheet(
+            "font: 700 10px 'Segoe UI'; " + style +
+            " border-radius: 8px; padding: 3px 8px;");
     }
     if (connectionCheckTimer_)
     {
-        if (online)
+        if (state == ApiConnectionState::Online)
         {
             connectionRetryDelayMs_ = 5 * 60 * 1000;
         }
-        else
+        else if (state == ApiConnectionState::Offline ||
+                 state == ApiConnectionState::LocalMode)
         {
             connectionRetryDelayMs_ = (std::min)(connectionRetryDelayMs_ * 2,
                                                   15 * 60 * 1000);
         }
         connectionCheckTimer_->setInterval(connectionRetryDelayMs_);
     }
+}
+
+void DashboardMainWindow::clearAuthenticatedAccount(const QString& explanation,
+                                                    const QString& profileMessage,
+                                                    ApiConnectionState state,
+                                                    bool transportReachable)
+{
+    ++accountSessionGeneration_;
+    authenticatedDriverId_ = 0;
+    authenticatedRole_.clear();
+    authenticatedRank_.clear();
+    syncDriverId_ = 0;
+    connectionRequestInFlight_ = false;
+    profileRequestInFlight_ = false;
+    syncRequestInFlight_ = false;
+    syncAgainRequested_ = false;
+    remoteCompletedJobs_.clear();
+    remoteActiveJobs_.clear();
+    fetchedServerJobs_.clear();
+    pendingSyncJobs_.clear();
+    if (networkManager_)
+    {
+        const QList<QNetworkReply*> replies = networkManager_->findChildren<QNetworkReply*>();
+        for (QNetworkReply* reply : replies)
+        {
+            if (reply->property("nlsiAuthenticatedRequest").toBool())
+            {
+                reply->abort();
+            }
+        }
+    }
+    updateApiConnectionState(state, explanation, transportReachable);
+    if (testApiConnectionButton_)
+    {
+        testApiConnectionButton_->setEnabled(true);
+    }
+    if (refreshProfileButton_)
+    {
+        refreshProfileButton_->setEnabled(true);
+    }
+    if (profileStatus_)
+    {
+        setProfileUnavailable(profileMessage);
+    }
+    if (statusBar())
+    {
+        statusBar()->showMessage(uppercaseDisplayText(profileMessage));
+    }
+    refreshCompletedJobs();
 }
 
 void DashboardMainWindow::setProfileUnavailable(const QString& message)
@@ -1708,12 +1989,12 @@ void DashboardMainWindow::setProfileUnavailable(const QString& message)
     profileStatus_->setText(message);
 }
 
-void DashboardMainWindow::updateProfileRank(double qualifyingDistanceKm)
+void DashboardMainWindow::updateProfileRank(const QString& serverRank,
+                                            double qualifyingDistanceKm)
 {
-    const QString rank = rankForDistance(qualifyingDistanceKm);
-    profileRankValue_->setText(rank);
+    profileRankValue_->setText(serverRank);
     profileDistanceValue_->setText(formatDistance(qualifyingDistanceKm, "km", preferences_));
-    const double nextThreshold = nextRankThreshold(rank);
+    const double nextThreshold = nextRankThreshold(serverRank);
     if (nextThreshold <= 0.0)
     {
         profileRankProgress_->setValue(100);
@@ -1723,10 +2004,11 @@ void DashboardMainWindow::updateProfileRank(double qualifyingDistanceKm)
         return;
     }
 
-    const double currentThreshold = rankLowerThreshold(rank);
+    const double currentThreshold = rankLowerThreshold(serverRank);
     const double progress = (qualifyingDistanceKm - currentThreshold) /
         (nextThreshold - currentThreshold) * 100.0;
-    profileRankProgress_->setValue(static_cast<int>(std::round(progress)));
+    profileRankProgress_->setValue(static_cast<int>(std::round(
+        (std::max)(0.0, (std::min)(progress, 100.0)))));
     profileRankProgress_->setFormat("%p%");
     profileRemainingValue_->setText(
         formatDistance(nextThreshold - qualifyingDistanceKm, "km", preferences_) +
@@ -1804,29 +2086,17 @@ void DashboardMainWindow::requestCurrencyExchangeRate()
 void DashboardMainWindow::requestAccountProfile(bool connectionTest, bool synchronizeJobs,
                                                 bool automaticCheck)
 {
-    if (connectionRequestInFlight_ || profileRequestInFlight_)
+    if (connectionRequestInFlight_ || profileRequestInFlight_ || syncRequestInFlight_)
     {
         return;
     }
     if (apiSettings_.baseUrl.trimmed().isEmpty() || apiSettings_.apiKey.trimmed().isEmpty())
     {
-        const QString message = "Configure your API URL and key in Settings to connect.";
-        updateApiConnectionState(false, message);
-        authenticatedDriverId_ = 0;
-        if (!profileDataAvailable_)
-        {
-            setProfileUnavailable(message);
-        }
-        else
-        {
-            profileHeaderStatus_->setText("Cached");
-            profileStatus_->setText("Not connected. Configure your API URL and key in Settings. "
-                                    "Showing the last server-confirmed profile.");
-        }
+        const QString message = "Not connected. Configure your API URL and key in Settings to connect.";
+        clearAuthenticatedAccount(message, message);
         if (connectionTest)
         {
             apiConfigStatus_->setText(message);
-            testApiConnectionButton_->setEnabled(true);
         }
         return;
     }
@@ -1835,40 +2105,35 @@ void DashboardMainWindow::requestAccountProfile(bool connectionTest, bool synchr
     QString urlError;
     if (!normalizeApiBaseUrl(apiSettings_.baseUrl, normalizedBaseUrl, &urlError))
     {
-        updateApiConnectionState(false, "The configured API URL is invalid.");
-        if (!profileDataAvailable_)
-        {
-            setProfileUnavailable("The saved API URL is invalid. Update it in Settings > Config.");
-        }
-        else
-        {
-            profileHeaderStatus_->setText("Cached");
-            profileStatus_->setText("The saved API URL is invalid. Showing the last "
-                                    "server-confirmed profile.");
-        }
+        clearAuthenticatedAccount("The configured API URL is invalid.",
+            "The saved API URL is invalid. Update it in Settings > Config.");
         if (connectionTest)
         {
             apiConfigStatus_->setText(urlError);
-            testApiConnectionButton_->setEnabled(true);
         }
         return;
     }
     const QUrl url = apiEndpointUrl(apiSettings_.baseUrl, "driver-key.php");
     if (!url.isValid())
     {
-        updateApiConnectionState(false, "The configured API endpoint is invalid.");
+        clearAuthenticatedAccount("The configured API endpoint is invalid.",
+            "Connection error. Check the API URL in Settings > Config.");
         if (connectionTest)
         {
             apiConfigStatus_->setText("The saved API link is invalid. Update it in Settings > Config.");
-            testApiConnectionButton_->setEnabled(true);
-        }
-        else if (!profileDataAvailable_)
-        {
-            setProfileUnavailable("Connection error. Check the API URL in Settings > Config.");
         }
         return;
     }
 
+    updateApiConnectionState(ApiConnectionState::Authenticating,
+        "Contacting the API and validating the server-issued account profile.");
+    if (profileStatus_)
+    {
+        profileStatus_->setText(profileDataAvailable_
+            ? "Revalidating the server-confirmed account..."
+            : "Checking the configured account...");
+    }
+    const quint64 requestGeneration = accountSessionGeneration_;
     if (connectionTest)
     {
         connectionRequestInFlight_ = true;
@@ -1887,12 +2152,14 @@ void DashboardMainWindow::requestAccountProfile(bool connectionTest, bool synchr
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setRawHeader("Accept", "application/json");
+    addNgrokWarningBypassHeader(request);
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::ManualRedirectPolicy);
     const QByteArray body = QJsonDocument(QJsonObject{
         {QStringLiteral("key"), apiSettings_.apiKey.trimmed()}
     }).toJson(QJsonDocument::Compact);
     QNetworkReply* reply = networkManager_->post(request, body);
+    reply->setProperty("nlsiAuthenticatedRequest", true);
     QTimer::singleShot(15000, reply, [reply]()
     {
         if (reply->isRunning())
@@ -1901,34 +2168,45 @@ void DashboardMainWindow::requestAccountProfile(bool connectionTest, bool synchr
         }
     });
     connect(reply, &QNetworkReply::finished, this,
-            [this, reply, connectionTest, synchronizeJobs, automaticCheck]()
+            [this, reply, connectionTest, synchronizeJobs, automaticCheck, requestGeneration]()
     {
+        if (requestGeneration != accountSessionGeneration_)
+        {
+            reply->deleteLater();
+            return;
+        }
         const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const bool jsonContentType = hasJsonContentType(reply);
+        const QByteArray responseBytes = reply->readAll();
         QJsonParseError parseError;
-        const QJsonDocument response = QJsonDocument::fromJson(reply->readAll(), &parseError);
+        const QJsonDocument response = QJsonDocument::fromJson(responseBytes, &parseError);
         const QJsonObject payload = response.isObject() ? response.object() : QJsonObject();
         const QJsonObject driver = payload.value("driver").toObject();
         const QString role = driver.value("role").toString();
         const QString rank = driver.value("rank").toString();
         const QString username = driver.value("username").toString().trimmed();
         const QString displayName = driver.value("display_name").toString().trimmed();
-        const QString email = driver.value("email").toString().trimmed();
+        const QJsonValue emailValue = driver.value("email");
+        const bool emailValid = emailValue.isString();
+        const QString email = emailValue.toString().trimmed();
         const QJsonValue qualifyingDistance = driver.value("qualifying_distance_km");
         const double qualifyingDistanceKm = qualifyingDistance.toDouble(
             std::numeric_limits<double>::quiet_NaN());
         const double driverIdNumber = driver.value("driver_id").toDouble(-1);
         const bool rankValid = qualifyingDistance.isDouble() &&
             std::isfinite(qualifyingDistanceKm) && qualifyingDistanceKm >= 0.0 &&
-            rank == rankForDistance(qualifyingDistanceKm);
+            driver.value("rank").isString() && isSupportedDriverRank(rank);
         const bool authenticated = reply->error() == QNetworkReply::NoError &&
             statusCode == 200 &&
+            jsonContentType &&
             parseError.error == QJsonParseError::NoError &&
             response.isObject() && payload.value("success").toBool(false) &&
             payload.value("valid").toBool(false) &&
             driver.value("username").isString() && !username.isEmpty() &&
-            driver.value("email").isString() && !email.isEmpty() &&
+            emailValid &&
+            !email.isEmpty() && email.contains('@') &&
             driver.value("display_name").isString() && !displayName.isEmpty() &&
-            !role.trimmed().isEmpty() &&
+            isSupportedAccountRole(role) &&
             driver.value("status").toString() == "active" &&
             driver.value("driver_id").isDouble() &&
             std::isfinite(driverIdNumber) && driverIdNumber > 0 &&
@@ -1946,13 +2224,15 @@ void DashboardMainWindow::requestAccountProfile(bool connectionTest, bool synchr
                 refreshCompletedJobs();
             }
             authenticatedDriverId_ = accountId;
+            authenticatedRole_ = role;
+            authenticatedRank_ = rank;
             profileDataAvailable_ = true;
             profileQualifyingDistanceKm_ = qualifyingDistanceKm;
             profileUsernameValue_->setText(username);
             profileDisplayNameValue_->setText(displayName);
             profileEmail_ = email;
             profileEmailVisible_ = false;
-            profileEmailValue_->setText(maskedEmail(email));
+            profileEmailValue_->setText(email.isEmpty() ? unavailable : maskedEmail(email));
             profileDriverIdValue_->setText(QString::number(accountId));
             profileDriverStatusValue_->setText("active");
             profileRoleValue_->setText(role);
@@ -1962,11 +2242,11 @@ void DashboardMainWindow::requestAccountProfile(bool connectionTest, bool synchr
             profileHeaderStatus_->setText("Active");
             profileHeaderRole_->setText(role);
             profileUsernameCopyButton_->setEnabled(true);
-            profileEmailCopyButton_->setEnabled(true);
-            profileEmailVisibilityButton_->setEnabled(true);
+            profileEmailCopyButton_->setEnabled(!email.isEmpty());
+            profileEmailVisibilityButton_->setEnabled(!email.isEmpty());
             profileDriverIdCopyButton_->setEnabled(true);
-            updateProfileRank(qualifyingDistanceKm);
-            updateApiConnectionState(true,
+            updateProfileRank(rank, qualifyingDistanceKm);
+            updateApiConnectionState(ApiConnectionState::Online,
                 "The configured API is reachable and the driver key authenticated successfully.");
             profileStatus_->setText("Profile confirmed by the server.");
             if (connectionTest)
@@ -2013,6 +2293,10 @@ void DashboardMainWindow::requestAccountProfile(bool connectionTest, bool synchr
             {
                 message = "The API returned a malformed profile response. Local data remains available.";
             }
+            else if (statusCode == 200 && !jsonContentType)
+            {
+                message = "The API returned an unexpected content type. Local data remains available.";
+            }
             else if (statusCode == 200)
             {
                 message = "The API did not return a valid authenticated profile and rank. "
@@ -2026,41 +2310,36 @@ void DashboardMainWindow::requestAccountProfile(bool connectionTest, bool synchr
 
         if (!authenticated)
         {
-            updateApiConnectionState(false, message);
-            authenticatedDriverId_ = 0;
-            if (profileDataAvailable_)
+            logApiResponseFailure(reply, responseBytes, apiSettings_.baseUrl,
+                apiSettings_.apiKey, "HTTP 200 application/json object "
+                "{success:true, valid:true, driver:{driver_id, username, email, "
+                "display_name, status, role, rank, qualifying_distance_km}}");
+            const bool transportReachable = statusCode > 0;
+            const ApiConnectionState failedState =
+                statusCode == 0 || statusCode >= 500
+                    ? ApiConnectionState::Offline
+                    : ApiConnectionState::LocalMode;
+            const bool keepPreviouslyVerifiedProfile =
+                authenticatedDriverId_ > 0 && profileDataAvailable_ &&
+                (statusCode == 0 || statusCode == 429 || statusCode >= 500);
+            if (keepPreviouslyVerifiedProfile)
             {
-                profileHeaderStatus_->setText("Cached");
-            }
-            if (!connectionTest)
-            {
-                if (profileDataAvailable_)
+                updateApiConnectionState(failedState, message, transportReachable);
+                profileStatus_->setText(
+                    "The server-confirmed profile is retained; revalidation is temporarily unavailable.");
+                if (statusBar())
                 {
-                    profileHeaderStatus_->setText("Cached");
-                    profileStatus_->setText("LOCAL MODE. Showing the last server-confirmed profile. "
-                                            + message);
-                }
-                else
-                {
-                    setProfileUnavailable(message);
+                    statusBar()->showMessage(
+                        "ACCOUNT PROFILE LAST VERIFIED; API REVALIDATION UNAVAILABLE.");
                 }
             }
             else
             {
-                apiConfigStatus_->setText(message);
-                if (profileDataAvailable_)
-                {
-                    profileStatus_->setText(
-                        "LOCAL MODE. Showing the last server-confirmed profile. " + message);
-                }
-                testApiConnectionButton_->setEnabled(true);
+                clearAuthenticatedAccount(message, message, failedState, transportReachable);
             }
-            if (statusCode == 401 || statusCode == 400 || statusCode == 403)
+            if (connectionTest)
             {
-                remoteCompletedJobs_.clear();
-                remoteActiveJobs_.clear();
-                refreshCompletedJobs();
-                refreshDisplayedSnapshot();
+                apiConfigStatus_->setText(message);
             }
         }
         if (connectionTest)
@@ -2078,7 +2357,8 @@ void DashboardMainWindow::requestAccountProfile(bool connectionTest, bool synchr
 
 void DashboardMainWindow::synchronizeAccountJobs(qint64 accountId)
 {
-    if (!apiOnline_ || accountId <= 0 || apiSettings_.baseUrl.trimmed().isEmpty() ||
+    if (!apiOnline_ || accountId <= 0 || accountId != authenticatedDriverId_ ||
+        apiSettings_.baseUrl.trimmed().isEmpty() ||
         apiSettings_.apiKey.trimmed().isEmpty() ||
         apiSettings_.clientInstanceId.isEmpty())
     {
@@ -2093,7 +2373,6 @@ void DashboardMainWindow::synchronizeAccountJobs(qint64 accountId)
     syncDriverId_ = accountId;
     syncRequestInFlight_ = true;
     syncUploadHadFailure_ = false;
-    syncFetchHadFailure_ = false;
     syncUploadOffset_ = 0;
     pendingSyncJobs_.clear();
     fetchedServerJobs_.clear();
@@ -2102,26 +2381,16 @@ void DashboardMainWindow::synchronizeAccountJobs(qint64 accountId)
 
 void DashboardMainWindow::fetchServerJobs(qint64 accountId, int offset, bool afterUpload)
 {
-    if (accountId != syncDriverId_)
+    if (!apiOnline_ || accountId != authenticatedDriverId_ || accountId != syncDriverId_)
     {
         return;
     }
     QUrl url = apiEndpointUrl(apiSettings_.baseUrl, "job-sync.php");
     if (!url.isValid())
     {
-        syncFetchHadFailure_ = true;
-        if (!afterUpload)
-        {
-            fetchedServerJobs_.clear();
-            uploadLocalJobs(accountId);
-            return;
-        }
-        finishJobSynchronization(accountId,
-            syncUploadHadFailure_
-                ? "Job upload and server job fetch both failed; local jobs remain available."
-                : "Server job fetch failed: the saved API link is invalid. "
-                    "Local jobs remain available.",
-            false);
+        const QString message =
+            "LOCAL MODE. The server job endpoint is invalid; local jobs remain available.";
+        clearAuthenticatedAccount(message, message);
         return;
     }
     QUrlQuery query;
@@ -2130,10 +2399,12 @@ void DashboardMainWindow::fetchServerJobs(qint64 accountId, int offset, bool aft
     url.setQuery(query);
     QNetworkRequest request(url);
     request.setRawHeader("Accept", "application/json");
+    addNgrokWarningBypassHeader(request);
     request.setRawHeader("Authorization", "Bearer " + apiSettings_.apiKey.trimmed().toUtf8());
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::ManualRedirectPolicy);
     QNetworkReply* reply = networkManager_->get(request);
+    reply->setProperty("nlsiAuthenticatedRequest", true);
     QTimer::singleShot(20000, reply, [reply]()
     {
         if (reply->isRunning())
@@ -2145,7 +2416,8 @@ void DashboardMainWindow::fetchServerJobs(qint64 accountId, int offset, bool aft
     {
         const QByteArray responseBytes = reply->readAll();
         const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        if (accountId != syncDriverId_)
+        const bool jsonContentType = hasJsonContentType(reply);
+        if (!apiOnline_ || accountId != authenticatedDriverId_ || accountId != syncDriverId_)
         {
             reply->deleteLater();
             return;
@@ -2153,7 +2425,8 @@ void DashboardMainWindow::fetchServerJobs(qint64 accountId, int offset, bool aft
         QJsonParseError parseError;
         const QJsonDocument document = QJsonDocument::fromJson(responseBytes, &parseError);
         if (reply->error() != QNetworkReply::NoError ||
-            statusCode != 200 || parseError.error != QJsonParseError::NoError ||
+            statusCode != 200 || !jsonContentType ||
+            parseError.error != QJsonParseError::NoError ||
             !document.isObject() || !document.object().value("success").toBool() ||
             !document.object().value("driver_id").isDouble() ||
             document.object().value("driver_id").toDouble(-1.0) !=
@@ -2161,30 +2434,28 @@ void DashboardMainWindow::fetchServerJobs(qint64 accountId, int offset, bool aft
             !document.object().value("records").isArray() ||
             !document.object().value("pagination").isObject())
         {
-            syncFetchHadFailure_ = true;
+            logApiResponseFailure(reply, responseBytes, apiSettings_.baseUrl,
+                apiSettings_.apiKey,
+                "HTTP 200 application/json object {success:true, driver_id:number, "
+                "records:array, pagination:{limit, offset, total, next_offset}}");
             const QString failure = reply->error() != QNetworkReply::NoError
                 ? "network or timeout error"
                 : statusCode != 200
                     ? QString("HTTP %1").arg(statusCode)
+                    : !jsonContentType
+                        ? "unexpected response content type"
                     : parseError.error != QJsonParseError::NoError
                         ? "invalid JSON response"
                         : "server query or response validation failed";
             reply->deleteLater();
-            if (!afterUpload)
-            {
-                qWarning().noquote() << "NLSI server job fetch failed before upload:" << failure;
-                fetchedServerJobs_.clear();
-                uploadLocalJobs(accountId);
-                return;
-            }
-            const QString message = syncUploadHadFailure_
-                ? QString("Job upload and server job fetch both failed (%1); "
-                    "local jobs remain available.")
-                    .arg(failure)
-                : QString("Server job fetch failed (%1) after upload; "
-                    "local jobs remain available.")
-                    .arg(failure);
-            finishJobSynchronization(accountId, message, false);
+            const QString message = "LOCAL MODE. The server could not confirm this account "
+                "while refreshing jobs (" + failure + "). Local jobs remain available.";
+            const ApiConnectionState failedState =
+                statusCode == 0 || statusCode >= 500
+                    ? ApiConnectionState::Offline
+                    : ApiConnectionState::LocalMode;
+            handleJobSyncFailure(accountId, message, failedState, statusCode > 0,
+                statusCode == 401 || statusCode == 403);
             return;
         }
 
@@ -2203,20 +2474,10 @@ void DashboardMainWindow::fetchServerJobs(qint64 accountId, int offset, bool aft
             total < static_cast<double>(pageEnd))
         {
             reply->deleteLater();
-            syncFetchHadFailure_ = true;
-            if (!afterUpload)
-            {
-                qWarning().noquote() << "NLSI server job fetch failed: invalid pagination summary.";
-                fetchedServerJobs_.clear();
-                uploadLocalJobs(accountId);
-                return;
-            }
-            finishJobSynchronization(accountId,
-                syncUploadHadFailure_
-                    ? "Job upload and server job fetch both failed; local jobs remain available."
-                    : "Server job fetch failed: the response contained invalid pagination data. "
-                        "Local jobs remain available.",
-                false);
+            const QString message =
+                "LOCAL MODE. The server returned invalid job pagination data. "
+                "Local jobs remain available.";
+            handleJobSyncFailure(accountId, message, ApiConnectionState::LocalMode, true, false);
             return;
         }
         for (const QJsonValue& value : records)
@@ -2225,21 +2486,10 @@ void DashboardMainWindow::fetchServerJobs(qint64 accountId, int offset, bool aft
             if (!value.isObject() || !remoteJobFromJson(value.toObject(), record))
             {
                 reply->deleteLater();
-                syncFetchHadFailure_ = true;
-                if (!afterUpload)
-                {
-                    qWarning().noquote() << "NLSI server job fetch failed: invalid job record.";
-                    fetchedServerJobs_.clear();
-                    uploadLocalJobs(accountId);
-                    return;
-                }
-                finishJobSynchronization(accountId,
-                    syncUploadHadFailure_
-                        ? "Job upload and server job fetch both failed; "
-                            "local jobs remain available."
-                        : "Server job fetch failed: the response contained an invalid job record. "
-                            "Local jobs remain available.",
-                    false);
+                const QString message =
+                    "LOCAL MODE. The server returned an invalid job record. "
+                    "Local jobs remain available.";
+                handleJobSyncFailure(accountId, message, ApiConnectionState::LocalMode, true, false);
                 return;
             }
             record.accountId = accountId;
@@ -2253,22 +2503,10 @@ void DashboardMainWindow::fetchServerJobs(qint64 accountId, int offset, bool aft
                 nextOffset.toInt(-1) >= total)
             {
                 reply->deleteLater();
-                syncFetchHadFailure_ = true;
-                if (!afterUpload)
-                {
-                    qWarning().noquote()
-                        << "NLSI server job fetch failed: invalid pagination data.";
-                    fetchedServerJobs_.clear();
-                    uploadLocalJobs(accountId);
-                    return;
-                }
-                finishJobSynchronization(accountId,
-                    syncUploadHadFailure_
-                        ? "Job upload and server job fetch both failed; "
-                            "local jobs remain available."
-                        : "Server job fetch failed: the response contained invalid pagination data. "
-                            "Local jobs remain available.",
-                    false);
+                const QString message =
+                    "LOCAL MODE. The server returned invalid job pagination data. "
+                    "Local jobs remain available.";
+                handleJobSyncFailure(accountId, message, ApiConnectionState::LocalMode, true, false);
                 return;
             }
             const int next = nextOffset.toInt();
@@ -2282,21 +2520,10 @@ void DashboardMainWindow::fetchServerJobs(qint64 accountId, int offset, bool aft
         if (static_cast<double>(pageEnd) < total)
         {
             reply->deleteLater();
-            syncFetchHadFailure_ = true;
-            if (!afterUpload)
-            {
-                qWarning().noquote()
-                    << "NLSI server job fetch failed: the result was truncated.";
-                fetchedServerJobs_.clear();
-                uploadLocalJobs(accountId);
-                return;
-            }
-            finishJobSynchronization(accountId,
-                syncUploadHadFailure_
-                    ? "Job upload and server job fetch both failed; local jobs remain available."
-                    : "Server job fetch failed: the result was truncated. "
-                        "Local jobs remain available.",
-                false);
+            const QString message =
+                "LOCAL MODE. The server returned an incomplete job list. "
+                "Local jobs remain available.";
+            handleJobSyncFailure(accountId, message, ApiConnectionState::LocalMode, true, false);
             return;
         }
 
@@ -2314,20 +2541,6 @@ void DashboardMainWindow::fetchServerJobs(qint64 accountId, int offset, bool aft
                     qWarning().noquote() << "NLSI server job reconciliation failed:"
                                          << reconcileError;
                 }
-                else
-                {
-                    JobSyncState state;
-                    state.accountId = accountId;
-                    state.status = "synced";
-                    state.serverJobId = QString::fromStdString(serverRecord.id);
-                    if (!jobHistory_.setSyncState(
-                            serverRecord.localJobId, state, &reconcileError))
-                    {
-                        syncUploadHadFailure_ = true;
-                        qWarning().noquote() << "NLSI server job sync state could not be saved:"
-                                             << reconcileError;
-                    }
-                }
             }
             if (serverRecord.status == JobStatus::Active)
             {
@@ -2344,15 +2557,12 @@ void DashboardMainWindow::fetchServerJobs(qint64 accountId, int offset, bool aft
         reply->deleteLater();
         if (afterUpload)
         {
-            const QString message = syncFetchHadFailure_
-                ? "Server job fetch failed; uploaded jobs retain their server acknowledgment, "
-                    "and local jobs remain available."
-                : syncUploadHadFailure_
+            const QString message = syncUploadHadFailure_
                     ? "Job upload failed for some records; failed jobs remain saved locally "
                         "for retry and the server list was refreshed."
                     : "Server jobs refreshed; acknowledged local jobs are synchronized.";
             finishJobSynchronization(accountId, message,
-                                     !syncUploadHadFailure_ && !syncFetchHadFailure_);
+                                     !syncUploadHadFailure_);
         }
         else
         {
@@ -2363,7 +2573,7 @@ void DashboardMainWindow::fetchServerJobs(qint64 accountId, int offset, bool aft
 
 void DashboardMainWindow::uploadLocalJobs(qint64 accountId)
 {
-    if (accountId != syncDriverId_)
+    if (!apiOnline_ || accountId != authenticatedDriverId_ || accountId != syncDriverId_)
     {
         return;
     }
@@ -2388,16 +2598,6 @@ void DashboardMainWindow::uploadLocalJobs(qint64 accountId)
             continue;
         }
         QString stateError;
-        if (!jobHistory_.claimForAccount(record.id, accountId, &stateError))
-        {
-            if (stateError.contains("another account"))
-            {
-                continue;
-            }
-            qWarning().noquote() << "NLSI job ownership state:" << stateError;
-            syncUploadHadFailure_ = true;
-            continue;
-        }
         const std::optional<JobSyncState> state = jobHistory_.syncState(record.id, &stateError);
         if (!stateError.isEmpty())
         {
@@ -2407,6 +2607,20 @@ void DashboardMainWindow::uploadLocalJobs(qint64 accountId)
         }
         if (state && state->accountId != accountId)
         {
+            continue;
+        }
+        if (!state && authenticatedRole_ != "DRIVER")
+        {
+            continue;
+        }
+        if (!jobHistory_.claimForAccount(record.id, accountId, &stateError))
+        {
+            if (stateError.contains("another account"))
+            {
+                continue;
+            }
+            qWarning().noquote() << "NLSI job ownership state:" << stateError;
+            syncUploadHadFailure_ = true;
             continue;
         }
         if (state && state->status == "synced" && record.status != JobStatus::Active)
@@ -2435,13 +2649,6 @@ void DashboardMainWindow::uploadLocalJobs(qint64 accountId)
                 "affected jobs remain saved for retry.",
                 false);
         }
-        else if (syncFetchHadFailure_)
-        {
-            finishJobSynchronization(accountId,
-                "Server job fetch failed; no eligible local jobs were pending. "
-                "Local jobs remain available.",
-                false);
-        }
         else
         {
             finishJobSynchronization(accountId, "Server jobs refreshed; no local jobs are pending.");
@@ -2453,7 +2660,7 @@ void DashboardMainWindow::uploadLocalJobs(qint64 accountId)
 
 void DashboardMainWindow::uploadNextJobBatch(qint64 accountId)
 {
-    if (accountId != syncDriverId_)
+    if (!apiOnline_ || accountId != authenticatedDriverId_ || accountId != syncDriverId_)
     {
         return;
     }
@@ -2479,31 +2686,21 @@ void DashboardMainWindow::uploadNextJobBatch(qint64 accountId)
     const QUrl url = apiEndpointUrl(apiSettings_.baseUrl, "job-sync.php");
     if (!url.isValid())
     {
-        syncUploadHadFailure_ = true;
-        for (const JobRecord& record : batch)
-        {
-            JobSyncState failed;
-            failed.accountId = accountId;
-            failed.status = "failed";
-            failed.error = "invalid_api_url";
-            QString stateError;
-            if (!jobHistory_.setSyncState(record.id, failed, &stateError))
-            {
-                qWarning().noquote() << "NLSI job synchronization state:" << stateError;
-            }
-        }
-        syncUploadOffset_ = end;
-        uploadNextJobBatch(accountId);
+        const QString message =
+            "LOCAL MODE. The server job endpoint is invalid; local jobs remain available.";
+        clearAuthenticatedAccount(message, message);
         return;
     }
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setRawHeader("Accept", "application/json");
+    addNgrokWarningBypassHeader(request);
     request.setRawHeader("Authorization", "Bearer " + apiSettings_.apiKey.trimmed().toUtf8());
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::ManualRedirectPolicy);
     QNetworkReply* reply = networkManager_->post(
         request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    reply->setProperty("nlsiAuthenticatedRequest", true);
     QTimer::singleShot(20000, reply, [reply]()
     {
         if (reply->isRunning())
@@ -2515,7 +2712,8 @@ void DashboardMainWindow::uploadNextJobBatch(qint64 accountId)
     {
         const QByteArray responseBytes = reply->readAll();
         const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        if (accountId != syncDriverId_)
+        const bool jsonContentType = hasJsonContentType(reply);
+        if (!apiOnline_ || accountId != authenticatedDriverId_ || accountId != syncDriverId_)
         {
             reply->deleteLater();
             return;
@@ -2525,7 +2723,8 @@ void DashboardMainWindow::uploadNextJobBatch(qint64 accountId)
         const QJsonObject response = document.isObject() ? document.object() : QJsonObject();
         const QJsonArray acknowledgements = response.value("acknowledgements").toArray();
         bool validAcknowledgement = reply->error() == QNetworkReply::NoError &&
-            statusCode == 200 && parseError.error == QJsonParseError::NoError &&
+            statusCode == 200 && jsonContentType &&
+            parseError.error == QJsonParseError::NoError &&
             response.value("success").toBool() && response.value("committed").toBool() &&
             response.value("driver_id").isDouble() &&
             response.value("driver_id").toDouble(-1.0) == static_cast<double>(accountId) &&
@@ -2587,8 +2786,23 @@ void DashboardMainWindow::uploadNextJobBatch(qint64 accountId)
         }
         if (!validAcknowledgement)
         {
+            logApiResponseFailure(reply, responseBytes, apiSettings_.baseUrl,
+                apiSettings_.apiKey,
+                "HTTP 200 application/json object {success:true, committed:true, "
+                "driver_id:number, acknowledgements:[{local_job_id, job_id, acknowledged:true}]}");
             qWarning().noquote() << "NLSI job synchronization request failed:"
                                  << statusCode << reply->errorString();
+            const QString message =
+                "LOCAL MODE. The server did not confirm successful job persistence. "
+                "Local jobs remain available for retry.";
+            const ApiConnectionState failedState =
+                statusCode == 0 || statusCode >= 500
+                    ? ApiConnectionState::Offline
+                    : ApiConnectionState::LocalMode;
+            handleJobSyncFailure(accountId, message, failedState, statusCode > 0,
+                statusCode == 401 || statusCode == 403);
+            reply->deleteLater();
+            return;
         }
         syncUploadOffset_ = end;
         reply->deleteLater();
@@ -2597,6 +2811,40 @@ void DashboardMainWindow::uploadNextJobBatch(qint64 accountId)
             uploadNextJobBatch(accountId);
         });
     });
+}
+
+void DashboardMainWindow::handleJobSyncFailure(qint64 accountId, const QString& message,
+                                               ApiConnectionState state,
+                                               bool transportReachable,
+                                               bool authenticationFailure)
+{
+    if (accountId != authenticatedDriverId_ || accountId != syncDriverId_)
+    {
+        return;
+    }
+    if (authenticationFailure)
+    {
+        clearAuthenticatedAccount(message, message, state, transportReachable);
+        return;
+    }
+
+    syncRequestInFlight_ = false;
+    syncDriverId_ = 0;
+    syncAgainRequested_ = false;
+    fetchedServerJobs_.clear();
+    pendingSyncJobs_.clear();
+    updateApiConnectionState(state, message, transportReachable);
+    if (profileDataAvailable_)
+    {
+        profileStatus_->setText(
+            "Account profile remains server-verified; job synchronization is unavailable.");
+    }
+    if (statusBar())
+    {
+        statusBar()->showMessage(uppercaseDisplayText(
+            "ACCOUNT AUTHENTICATED; JOB SYNCHRONIZATION UNAVAILABLE: " + message));
+    }
+    refreshCompletedJobs();
 }
 
 void DashboardMainWindow::finishJobSynchronization(qint64 accountId, const QString& message,

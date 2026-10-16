@@ -39,18 +39,31 @@ public:
     void applySnapshot(const TelemetrySnapshot& snapshot);
 
 private:
+    enum class ApiConnectionState
+    {
+        LocalMode,
+        Authenticating,
+        Online,
+        Offline
+    };
+
     void buildSidebar();
     void buildContent();
     void showSettings();
     void savePreferences();
     bool saveApiSettingsFromForm();
     void testApiConnection();
+    void removeApiConfiguration();
     void refreshAccountProfile();
     void requestAccountProfile(bool connectionTest, bool synchronizeJobs = true,
                                bool automaticCheck = false);
-    void updateApiConnectionState(bool online, const QString& explanation);
+    void updateApiConnectionState(ApiConnectionState state, const QString& explanation,
+                                 bool transportReachable = false);
+    void clearAuthenticatedAccount(const QString& explanation, const QString& profileMessage,
+                                   ApiConnectionState state = ApiConnectionState::LocalMode,
+                                   bool transportReachable = false);
     void setProfileUnavailable(const QString& message);
-    void updateProfileRank(double qualifyingDistanceKm);
+    void updateProfileRank(const QString& serverRank, double qualifyingDistanceKm);
     void requestCurrencyExchangeRate();
     void updateNavigationState(QPushButton* activeButton);
     void startTelemetryListener();
@@ -66,6 +79,9 @@ private:
     void fetchServerJobs(qint64 accountId, int offset, bool afterUpload);
     void uploadLocalJobs(qint64 accountId);
     void uploadNextJobBatch(qint64 accountId);
+    void handleJobSyncFailure(qint64 accountId, const QString& message,
+                              ApiConnectionState state, bool transportReachable,
+                              bool authenticationFailure);
     void finishJobSynchronization(qint64 accountId, const QString& message,
                                   bool successful = true);
 
@@ -92,6 +108,7 @@ private:
     QLabel* apiConfigStatus_ = nullptr;
     QPushButton* saveApiSettingsButton_ = nullptr;
     QPushButton* testApiConnectionButton_ = nullptr;
+    QPushButton* removeApiConfigurationButton_ = nullptr;
     QLabel* profileUsernameValue_ = nullptr;
     QLabel* profileDisplayNameValue_ = nullptr;
     QLabel* profileEmailValue_ = nullptr;
@@ -138,9 +155,12 @@ private:
     bool connectionRequestInFlight_ = false;
     bool profileRequestInFlight_ = false;
     bool apiOnline_ = false;
+    bool apiTransportReachable_ = false;
     bool profileDataAvailable_ = false;
     bool profileEmailVisible_ = false;
     QString profileEmail_;
+    QString authenticatedRole_;
+    QString authenticatedRank_;
     bool syncRequestInFlight_ = false;
     bool exchangeRateRequestInFlight_ = false;
     bool syncAgainRequested_ = false;
@@ -149,13 +169,13 @@ private:
     int connectionRetryDelayMs_ = 60000;
     qint64 authenticatedDriverId_ = 0;
     qint64 syncDriverId_ = 0;
+    quint64 accountSessionGeneration_ = 0;
     std::vector<JobRecord> remoteCompletedJobs_;
     std::vector<JobRecord> remoteActiveJobs_;
     std::vector<JobRecord> fetchedServerJobs_;
     std::vector<JobRecord> pendingSyncJobs_;
     std::size_t syncUploadOffset_ = 0;
     bool syncUploadHadFailure_ = false;
-    bool syncFetchHadFailure_ = false;
     bool ipcError_ = false;
 
     QLabel* processLabel_ = nullptr;

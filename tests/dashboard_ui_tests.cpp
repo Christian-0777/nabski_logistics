@@ -5,10 +5,13 @@
 #include <QAbstractButton>
 #include <QComboBox>
 #include <QDialog>
+#include <QEventLoop>
 #include <QFile>
 #include <QGroupBox>
 #include <QLabel>
+#include <QLoggingCategory>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSizePolicy>
@@ -16,11 +19,26 @@
 #include <QScrollBar>
 #include <QStackedWidget>
 #include <QStatusBar>
+#include <QStringList>
 #include <QTemporaryDir>
 #include <QTimer>
 
 #include "DashboardMainWindow.h"
 #include "JobReport.h"
+
+namespace {
+
+QStringList* integrationLogMessages = nullptr;
+
+void captureIntegrationLog(QtMsgType, const QMessageLogContext&, const QString& message)
+{
+    if (integrationLogMessages)
+    {
+        integrationLogMessages->append(message);
+    }
+}
+
+} // namespace
 
 int main(int argc, char** argv)
 {
@@ -33,9 +51,9 @@ int main(int argc, char** argv)
     }
     const QString dashboardProfilePath = dashboardProfileDirectory.filePath("profile.nlsi");
     nlsi::DashboardMainWindow window(nullptr, QString(), dashboardProfilePath);
-    if (window.windowTitle() != "NLSI Exclusive Logbook 1.8.0 Beta")
+    if (window.windowTitle() != "NLSI Exclusive Logbook 1.8.5 Beta")
     {
-        std::cerr << "The dashboard window title does not report v1.8.0 Beta.\n";
+        std::cerr << "The dashboard window title does not report v1.8.5 Beta.\n";
         return 1;
     }
     auto* jobSyncTimer = window.findChild<QTimer*>("jobSyncTimer");
@@ -320,9 +338,16 @@ int main(int argc, char** argv)
     auto* profileProgress = window.findChild<QProgressBar*>("profileRankProgress");
     auto* profileCopyButton = window.findChild<QPushButton*>("profileUsernameCopyButton");
     auto* profileEmailVisibility = window.findChild<QPushButton*>("profileEmailVisibilityButton");
+    auto* refreshProfile = window.findChild<QPushButton*>("refreshProfileButton");
+    if (!refreshProfile)
+    {
+        std::cerr << "The profile refresh action is missing.\n";
+        return 1;
+    }
+    refreshProfile->click();
     if (settingsTabs->currentIndex() != 2 ||
         !window.findChild<QLabel*>("profileStatus") ||
-        !window.findChild<QLabel*>("profileStatus")->text().contains("Configure your API URL and key") ||
+        !window.findChild<QLabel*>("profileStatus")->text().contains("Not connected") ||
         !window.findChild<QLabel*>("headerMode")->text().contains("LOCAL MODE") ||
         apiKeyInput->echoMode() != QLineEdit::Password ||
         !profileProgress || profileProgress->format() != "Not connected" ||
@@ -344,6 +369,26 @@ int main(int argc, char** argv)
             return 1;
         }
     }
+    auto* headerMode = window.findChild<QLabel*>("headerMode");
+    auto* pageCompletedNavigation = window.findChild<QPushButton*>("completedJobsNavButton");
+    auto* pageDashboardNavigation = window.findChild<QPushButton*>("dashboardNavButton");
+    if (!headerMode || !pageCompletedNavigation || !pageDashboardNavigation)
+    {
+        std::cerr << "A shared connection indicator or application page is missing.\n";
+        return 1;
+    }
+    pageCompletedNavigation->click();
+    if (headerMode->text() != "LOCAL MODE")
+    {
+        std::cerr << "The shared header does not retain LOCAL MODE on completed jobs.\n";
+        return 1;
+    }
+    pageDashboardNavigation->click();
+    if (headerMode->text() != "LOCAL MODE")
+    {
+        std::cerr << "The shared header does not retain LOCAL MODE on the dashboard.\n";
+        return 1;
+    }
     configTab->click();
     if (settingsTabs->currentIndex() != 1 ||
         !apiUrlInput->text().isEmpty())
@@ -364,6 +409,46 @@ int main(int argc, char** argv)
     if (!window.statusBar()->currentMessage().contains("PREFERENCES SAVED"))
     {
         std::cerr << "Saving preferences did not provide success feedback.\n";
+        return 1;
+    }
+    auto* removeApiConfiguration =
+        window.findChild<QPushButton*>("removeApiConfigurationButton");
+    if (!removeApiConfiguration)
+    {
+        std::cerr << "The local API configuration removal action is missing.\n";
+        return 1;
+    }
+    configTab->click();
+    QTimer::singleShot(0, []()
+    {
+        auto* confirmation = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+        if (confirmation &&
+            confirmation->text().contains("does not revoke or delete the server-side key"))
+        {
+            confirmation->button(QMessageBox::Yes)->click();
+        }
+        else
+        {
+            QCoreApplication::exit(3);
+        }
+    });
+    removeApiConfiguration->click();
+    if (headerMode->text() != "LOCAL MODE" ||
+        !window.findChild<QLabel*>("apiConfigStatus")->text().contains("has not been revoked"))
+    {
+        std::cerr << "Confirmed local API removal did not retain the server-key distinction.\n";
+        return 1;
+    }
+    nlsi::ApiSettings removedApiSettings;
+    nlsi::UserPreferences preservedPreferences;
+    QString removalError;
+    nlsi::ProfileStore dashboardProfileStore(dashboardProfilePath);
+    if (!dashboardProfileStore.loadApiSettings(removedApiSettings, &removalError) ||
+        !removedApiSettings.baseUrl.isEmpty() || !removedApiSettings.apiKey.isEmpty() ||
+        !dashboardProfileStore.load(preservedPreferences, &removalError) ||
+        preservedPreferences.speed != nlsi::SpeedUnit::MilesPerHour)
+    {
+        std::cerr << "Removing API config failed to preserve local preferences or clear credentials.\n";
         return 1;
     }
     nlsi::TelemetrySnapshot preferenceSnapshot;
@@ -663,6 +748,94 @@ int main(int argc, char** argv)
         return 1;
     }
     historyWindow.close();
+
+    const QString integrationProfilePath =
+        qEnvironmentVariable("NLSI_API_INTEGRATION_PROFILE");
+    if (!integrationProfilePath.isEmpty())
+    {
+        QTemporaryDir integrationData;
+        if (!integrationData.isValid())
+        {
+            std::cerr << "Could not create isolated API integration-test data.\n";
+            return 1;
+        }
+        QStringList integrationMessages;
+        integrationLogMessages = &integrationMessages;
+        const QtMessageHandler originalMessageHandler =
+            qInstallMessageHandler(captureIntegrationLog);
+        nlsi::DashboardMainWindow integrationWindow(
+            nullptr, integrationData.filePath("jobs"), integrationProfilePath);
+        auto* username = integrationWindow.findChild<QLabel*>("profileUsernameValue");
+        auto* displayName = integrationWindow.findChild<QLabel*>("profileDisplayNameValue");
+        auto* driverId = integrationWindow.findChild<QLabel*>("profileDriverIdValue");
+        auto* accountStatus = integrationWindow.findChild<QLabel*>("profileDriverStatusValue");
+        auto* role = integrationWindow.findChild<QLabel*>("profileRoleValue");
+        auto* rank = integrationWindow.findChild<QLabel*>("profileRankValue");
+        auto* profileStatus = integrationWindow.findChild<QLabel*>("profileStatus");
+        auto* connectionMode = integrationWindow.findChild<QLabel*>("headerMode");
+        QEventLoop integrationLoop;
+        QTimer pollTimer;
+        pollTimer.setInterval(100);
+        QObject::connect(&pollTimer, &QTimer::timeout, &integrationLoop, [&]()
+        {
+            if (profileStatus &&
+                profileStatus->text().contains("Server jobs refreshed"))
+            {
+                integrationLoop.quit();
+            }
+        });
+        pollTimer.start();
+        QTimer::singleShot(30000, &integrationLoop, &QEventLoop::quit);
+        integrationLoop.exec();
+        qInstallMessageHandler(originalMessageHandler);
+        integrationLogMessages = nullptr;
+        const bool validRank = rank &&
+            (rank->text() == "Trainee" || rank->text() == "Driver" ||
+             rank->text() == "Elder" || rank->text() == "Veteran" ||
+             rank->text() == "Expert" || rank->text() == "Legend" ||
+             rank->text() == "Master" || rank->text() == "Ultimate" ||
+             rank->text() == "Mythic");
+        bool driverIdIsValid = false;
+        if (driverId)
+        {
+            const qlonglong parsedDriverId = driverId->text().toLongLong(&driverIdIsValid);
+            driverIdIsValid = driverIdIsValid && parsedDriverId > 0;
+        }
+        if (!username || username->text().isEmpty() || username->text() == "Not connected" ||
+            !displayName || displayName->text().isEmpty() ||
+            !driverIdIsValid || !accountStatus || accountStatus->text() != "active" ||
+            !role || !nlsi::isSupportedAccountRole(role->text()) || !validRank ||
+            !profileStatus || !profileStatus->text().contains("Server jobs refreshed") ||
+            !connectionMode || connectionMode->text() != "ONLINE")
+        {
+            std::cerr << "Actual API integration failed validation: "
+                      << "username=" << (username && username->text() != "Not connected")
+                      << " display_name=" << (displayName && !displayName->text().isEmpty())
+                      << " driver_id=" << driverIdIsValid
+                      << " account_status=" << (accountStatus && accountStatus->text() == "active")
+                      << " role=" << (role && nlsi::isSupportedAccountRole(role->text()))
+                      << " rank=" << validRank
+                      << " job_refresh=" << (profileStatus &&
+                          profileStatus->text().contains("Server jobs refreshed"))
+                      << " connection="
+                      << (connectionMode ? connectionMode->text().toStdString() : "missing")
+                      << " footer="
+                      << integrationWindow.statusBar()->currentMessage().toStdString()
+                      << " profile_status="
+                      << (profileStatus ? profileStatus->text().toStdString() : "missing")
+                      << ".\n";
+            for (const QString& diagnostic : integrationMessages)
+            {
+                if (diagnostic.startsWith("NLSI API response failure:"))
+                {
+                    std::cerr << diagnostic.toStdString() << "\n";
+                }
+            }
+            return 1;
+        }
+        integrationWindow.close();
+        std::cout << "Actual API profile and read-only job refresh passed.\n";
+    }
 
     std::cout << "Dashboard minimum size, section order, and vertical scrolling passed.\n";
     return 0;

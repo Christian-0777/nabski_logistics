@@ -15,7 +15,7 @@ The verified build environment for this project used:
 - CMake 4.4.4
 - Ninja 1.12.1 (bundled with Visual Studio)
 - Qt 6.12.0 MSVC 2022 x64, including Widgets and Network
-- Inno Setup 6.7.3 (for the versioned installer build)
+- Inno Setup 7 (for the versioned installer build)
 
 ## Configure and build
 
@@ -53,12 +53,18 @@ dashboard, both plugin DLLs, and release documents:
 powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1
 ```
 
-The v1.8.0 Beta installer is written to
-`releases\1.8.0-beta\NLSI-Exclusive-Logbook-v1.8.0-beta-Setup.exe` and
+The NLSI Exclusive Logbook v1.8.5 Beta installer is written to
+`releases\1.8.5-beta\NLSI-Exclusive-Logbook-v1.8.5-beta-Setup.exe` and
 defaults to `C:\Program Files\Nabski Logistics Solutions Inc`. It uses the
 stable Inno Setup AppId for updates, reuses a valid previous install location,
 closes the dashboard through Windows Restart Manager, and leaves files not
 owned by the installer alone.
+
+The release helper always creates a clean version-specific payload, verifies
+the executable and both plugin version resources before staging, and passes
+that exact payload directory to ISCC. The installer source has no implicit
+payload fallback, so compiling it without an explicitly verified staging
+directory fails instead of packaging old build output.
 
 The dashboard and Qt runtime are installed at the destination root. The x64
 and x86 plugins are included at `plugin\win_x64\nlsi_scs_plugin.dll` and
@@ -74,10 +80,11 @@ the 32-bit DLL does not link against the dashboard's x64 Qt libraries.
 Both plugin DLLs use the static MSVC runtime and are checked for imports,
 architecture, and the required SCS exports before packaging.
 
-The release package includes runtime assets and release documentation; the
-installer and documentation SHA-256 values are written to `manifest.sha256`.
-The final installer, staged payload, release documents, and SHA-256 manifest
-are kept under `releases\1.8.0-beta`.
+The installer places the release notes and installation guide in its `docs`
+subdirectory. The same documents are also kept beside the installer, and their
+SHA-256 values are written to `manifest.sha256`. The final installer, staged
+payload, release documents, and SHA-256 manifest are kept under
+`releases\1.8.5-beta`.
 
 The plugin communicates with the dashboard over the local Windows named pipe `\\.\pipe\nlsi_scs_telemetry`. The dashboard listens through Qt LocalServer. Completed job history, the active recovery record, and the monotonic ID sequence are stored locally in the user's application-data folder.
 

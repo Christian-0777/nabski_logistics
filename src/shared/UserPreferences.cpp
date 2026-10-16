@@ -307,6 +307,11 @@ bool isValidPreferences(const UserPreferences& preferences)
         !distanceToString(preferences.distance).isEmpty();
 }
 
+bool isSupportedAccountRole(const QString& role)
+{
+    return role == "DRIVER" || role == "MANAGER" || role == "CEO" || role == "ADMIN";
+}
+
 bool normalizeApiBaseUrl(const QString& value, QString& normalized, QString* error)
 {
     setError(error, QString());
@@ -519,6 +524,52 @@ bool ProfileStore::saveApiSettings(const ApiSettings& settings, QString* error) 
     }
     api.insert("client_instance_id", clientInstanceId);
     profile.insert("api", api);
+    if (!writeProfile(filePath_, profile, readError))
+    {
+        setError(error, readError);
+        return false;
+    }
+    return true;
+}
+
+bool ProfileStore::removeApiCredentials(QString* error) const
+{
+    setError(error, QString());
+    QString readError;
+    QLockFile lock(filePath_ + ".lock");
+    if (!lockProfile(filePath_, lock, readError))
+    {
+        setError(error, readError);
+        return false;
+    }
+    QJsonObject profile;
+    bool exists = false;
+    if (!readProfile(filePath_, profile, exists, readError))
+    {
+        setError(error, readError);
+        return false;
+    }
+    if (!exists || !profile.contains("api"))
+    {
+        return true;
+    }
+    if (!profile.value("api").isObject())
+    {
+        setError(error, "Saved API settings are invalid; encrypted profile was not changed.");
+        return false;
+    }
+
+    QJsonObject api = profile.value("api").toObject();
+    api.remove("base_url");
+    api.remove("key");
+    if (api.isEmpty())
+    {
+        profile.remove("api");
+    }
+    else
+    {
+        profile.insert("api", api);
+    }
     if (!writeProfile(filePath_, profile, readError))
     {
         setError(error, readError);
