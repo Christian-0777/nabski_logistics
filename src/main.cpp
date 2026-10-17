@@ -11,7 +11,7 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     app.setApplicationName("NLSI Exclusive Logbook");
     app.setApplicationDisplayName("NLSI Exclusive Logbook");
-    app.setApplicationVersion("1.8.6 Beta");
+    app.setApplicationVersion("1.8.8 Beta");
 
     QString isolatedDataDirectory;
     const QString smokeArgumentPrefix = "--isolated-smoke-data-dir=";

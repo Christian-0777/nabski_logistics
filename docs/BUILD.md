@@ -53,8 +53,8 @@ dashboard, both plugin DLLs, and release documents:
 powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1
 ```
 
-The NLSI Exclusive Logbook v1.8.6 Beta installer is written to
-`releases\1.8.6-beta\NLSI-Exclusive-Logbook-v1.8.6-beta-Setup.exe` and
+The NLSI Exclusive Logbook v1.8.8 Beta installer is written to
+`releases\1.8.8-beta\NLSI-Exclusive-Logbook-v1.8.8-beta-Setup.exe` and
 defaults to `C:\Program Files\Nabski Logistics Solutions Inc`. It uses the
 stable Inno Setup AppId for updates, reuses a valid previous install location,
 closes the dashboard through Windows Restart Manager, and leaves files not
@@ -84,7 +84,7 @@ The installer places the release notes and installation guide in its `docs`
 subdirectory. The same documents are also kept beside the installer, and their
 SHA-256 values are written to `manifest.sha256`. The final installer, staged
 payload, release documents, and SHA-256 manifest are kept under
-`releases\1.8.6-beta`.
+`releases\1.8.8-beta`.
 The plugin communicates with the dashboard over the local Windows named pipe `\\.\pipe\nlsi_scs_telemetry`. The dashboard listens through Qt LocalServer. Completed job history, the active recovery record, and the monotonic ID sequence are stored locally in the user's application-data folder.
 
 ## Targets
@@ -96,6 +96,9 @@ The plugin communicates with the dashboard over the local Windows named pipe `\\
 - `nlsi_job_history_tests` — ID allocation, active-job restart recovery,
   terminal transitions, atomic records, duplicate events, sequence expansion,
   malformed-record isolation, and authoritative server reconciliation
+- `nlsi_job_sync_protocol_tests` — account-role and ownership gating, no-state
+  uploads, committed response validation, exact acknowledgements, synced-job
+  suppression, and pending retry state
 - `nlsi_preferences_tests` — exact conversions, encrypted preference
   persistence, corrupt-profile handling, and preservation of unrelated data
 - `nlsi_dashboard_ui_tests` — dashboard settings and measurement presentation,

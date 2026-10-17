@@ -8,6 +8,7 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QGroupBox>
+#include <QLayout>
 #include <QLabel>
 #include <QLoggingCategory>
 #include <QLineEdit>
@@ -51,9 +52,27 @@ int main(int argc, char** argv)
     }
     const QString dashboardProfilePath = dashboardProfileDirectory.filePath("profile.nlsi");
     nlsi::DashboardMainWindow window(nullptr, QString(), dashboardProfilePath);
-    if (window.windowTitle() != "NLSI Exclusive Logbook 1.8.6 Beta")
+    if (window.windowTitle() != "NLSI Exclusive Logbook 1.8.8 Beta")
     {
-        std::cerr << "The dashboard window title does not report v1.8.6 Beta.\n";
+        std::cerr << "The dashboard window title does not report v1.8.8 Beta.\n";
+        return 1;
+    }
+    auto* taskCard = window.findChild<QGroupBox*>("profileTaskCard");
+    auto* taskProgress = window.findChild<QProgressBar*>("profileTaskProgress");
+    auto* taskStatus = window.findChild<QLabel*>("profileTaskStatus");
+    auto* rankCard = window.findChild<QGroupBox*>("profileRankCard");
+    auto* rankProgress = window.findChild<QProgressBar*>("profileRankProgress");
+    if (!taskCard || !taskProgress || taskProgress->isEnabled() ||
+        taskProgress->format() != "TASK DATA UNAVAILABLE" ||
+        taskProgress->minimum() != 0 || taskProgress->maximum() != 100 ||
+        !taskStatus || !taskStatus->text().contains("Not connected") ||
+        !rankCard || !rankProgress || taskProgress == rankProgress ||
+        taskCard->parentWidget() != rankCard->parentWidget() ||
+        !taskCard->parentWidget()->layout() ||
+        taskCard->parentWidget()->layout()->indexOf(taskCard) >=
+            taskCard->parentWidget()->layout()->indexOf(rankCard))
+    {
+        std::cerr << "Profile task unavailable state or TASK-before-RANK layout is incorrect.\n";
         return 1;
     }
     auto* jobSyncTimer = window.findChild<QTimer*>("jobSyncTimer");
@@ -119,6 +138,8 @@ int main(int argc, char** argv)
     auto* pageStack = window.findChild<QStackedWidget*>("mainPages");
     auto* settingsTabs = window.findChild<QStackedWidget*>("settingsTabs");
     auto* dashboardScroll = window.findChild<QScrollArea*>("dashboardScroll");
+    auto* completedJobsScroll = window.findChild<QScrollArea*>("completedJobsScroll");
+    auto* profileScroll = window.findChild<QScrollArea*>("profileScroll");
     auto* brandName = window.findChild<QLabel*>("sidebarTitle");
     auto* brandSubtitle = window.findChild<QLabel*>("sidebarSubtitle");
     auto* headerTitle = window.findChild<QLabel*>("headerTitle");
@@ -127,6 +148,7 @@ int main(int argc, char** argv)
     auto* cardTitle = panels.at(0);
     if (!sidebar || !dashboardItem || !completedItem || !settingsItem || !pageStack ||
         !settingsTabs || settingsTabs->count() != 3 || !dashboardScroll ||
+        !completedJobsScroll || !profileScroll ||
         dashboardItem->sizePolicy().horizontalPolicy() != QSizePolicy::Expanding ||
         !dashboardItem->property("sidebarNavButton").toBool() ||
         !completedItem->property("sidebarNavButton").toBool() ||
@@ -202,12 +224,45 @@ int main(int argc, char** argv)
         !window.styleSheet().contains("QPushButton[sidebarNavButton=\"true\"]:pressed") ||
         !window.styleSheet().contains("QPushButton[sidebarNavButton=\"true\"][active=\"true\"]") ||
         !window.styleSheet().contains("background: #D94F8C") ||
-        !window.styleSheet().contains("QScrollArea#dashboardScroll QScrollBar::handle:vertical:hover") ||
-        !window.styleSheet().contains("QScrollArea#dashboardScroll QScrollBar::handle:vertical:pressed"))
+        !window.styleSheet().contains("QScrollBar:vertical { width: 10px;") ||
+        !window.styleSheet().contains("QScrollBar:horizontal { height: 10px;") ||
+        !window.styleSheet().contains("QScrollBar::handle:vertical { min-height: 28px;") ||
+        !window.styleSheet().contains("QScrollBar::handle:horizontal { min-width: 28px;") ||
+        !window.styleSheet().contains("QScrollBar::handle:vertical:hover") ||
+        !window.styleSheet().contains("QScrollBar::handle:horizontal:hover") ||
+        !window.styleSheet().contains("QScrollBar::handle:vertical:pressed") ||
+        !window.styleSheet().contains("QScrollBar::handle:horizontal:pressed") ||
+        !window.styleSheet().contains("QScrollBar::add-page:vertical") ||
+        !window.styleSheet().contains("QAbstractScrollArea::corner"))
     {
-        std::cerr << "Sidebar or dashboard scrollbar interaction states are missing.\n";
+        std::cerr << "Sidebar or application scrollbar interaction states are missing.\n";
         return 1;
     }
+
+    QScrollArea horizontalScrollArea(&window);
+    horizontalScrollArea.resize(120, 100);
+    horizontalScrollArea.setWidgetResizable(false);
+    horizontalScrollArea.setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    horizontalScrollArea.setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    auto* oversizedContent = new QWidget();
+    oversizedContent->setFixedSize(700, 500);
+    horizontalScrollArea.setWidget(oversizedContent);
+    horizontalScrollArea.show();
+    app.processEvents();
+    if (horizontalScrollArea.horizontalScrollBar()->maximum() <= 0 ||
+        horizontalScrollArea.verticalScrollBar()->maximum() <= 0)
+    {
+        std::cerr << "Application scrollbars do not preserve horizontal and vertical scrolling.\n";
+        return 1;
+    }
+    const int horizontalScrollStart = horizontalScrollArea.horizontalScrollBar()->value();
+    horizontalScrollArea.horizontalScrollBar()->triggerAction(QAbstractSlider::SliderPageStepAdd);
+    if (horizontalScrollArea.horizontalScrollBar()->value() <= horizontalScrollStart)
+    {
+        std::cerr << "Application horizontal scrollbar page interaction did not scroll content.\n";
+        return 1;
+    }
+    horizontalScrollArea.hide();
 
     nlsi::TelemetrySnapshot drivingSnapshot;
     drivingSnapshot.values["truck.fuel.amount"] = {"Fuel", "23.11", "L", true};
@@ -772,14 +827,21 @@ int main(int argc, char** argv)
         auto* role = integrationWindow.findChild<QLabel*>("profileRoleValue");
         auto* rank = integrationWindow.findChild<QLabel*>("profileRankValue");
         auto* profileStatus = integrationWindow.findChild<QLabel*>("profileStatus");
+        auto* integrationTaskProgress =
+            integrationWindow.findChild<QProgressBar*>("profileTaskProgress");
+        auto* integrationTaskStatus =
+            integrationWindow.findChild<QLabel*>("profileTaskStatus");
         auto* connectionMode = integrationWindow.findChild<QLabel*>("headerMode");
         QEventLoop integrationLoop;
         QTimer pollTimer;
         pollTimer.setInterval(100);
         QObject::connect(&pollTimer, &QTimer::timeout, &integrationLoop, [&]()
         {
+            const bool taskLoaded = integrationTaskStatus &&
+                (integrationTaskStatus->text().startsWith("No task record is initialized") ||
+                 integrationTaskStatus->text().contains(" completed of "));
             if (profileStatus &&
-                profileStatus->text().contains("Server jobs refreshed"))
+                profileStatus->text().contains("Server jobs refreshed") && taskLoaded)
             {
                 integrationLoop.quit();
             }
@@ -806,6 +868,14 @@ int main(int argc, char** argv)
             !driverIdIsValid || !accountStatus || accountStatus->text() != "active" ||
             !role || !nlsi::isSupportedAccountRole(role->text()) || !validRank ||
             !profileStatus || !profileStatus->text().contains("Server jobs refreshed") ||
+            !integrationTaskProgress || !integrationTaskStatus ||
+            !(integrationTaskStatus->text().startsWith("No task record is initialized") ||
+              integrationTaskStatus->text().contains(" completed of ")) ||
+            (integrationTaskStatus->text().startsWith("No task record is initialized")
+                ? integrationTaskProgress->isEnabled() ||
+                    integrationTaskProgress->format() != "NO TASK RECORD"
+                : !integrationTaskProgress->isEnabled() ||
+                    !integrationTaskProgress->format().startsWith("TASK %p% | ")) ||
             !connectionMode || connectionMode->text() != "ONLINE")
         {
             std::cerr << "Actual API integration failed validation: "
@@ -817,6 +887,10 @@ int main(int argc, char** argv)
                       << " rank=" << validRank
                       << " job_refresh=" << (profileStatus &&
                           profileStatus->text().contains("Server jobs refreshed"))
+                      << " task_loaded=" << (integrationTaskStatus &&
+                          (integrationTaskStatus->text().startsWith(
+                               "No task record is initialized") ||
+                           integrationTaskStatus->text().contains(" completed of ")))
                       << " connection="
                       << (connectionMode ? connectionMode->text().toStdString() : "missing")
                       << " footer="

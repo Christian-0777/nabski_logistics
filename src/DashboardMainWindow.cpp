@@ -3,6 +3,7 @@
 #include "DashboardTypography.h"
 #include "JobReport.h"
 #include "MeasurementFormatting.h"
+#include "JobSyncProtocol.h"
 
 #include <algorithm>
 #include <cmath>
@@ -848,7 +849,7 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
     const bool profileLoaded = profileStore_.load(preferences_, &profileError);
     const bool apiSettingsLoaded = profileStore_.loadApiSettings(apiSettings_, &apiSettingsLoadError_);
     networkManager_ = new QNetworkAccessManager(this);
-    setWindowTitle("NLSI Exclusive Logbook 1.8.6 Beta");
+    setWindowTitle("NLSI Exclusive Logbook 1.8.8 Beta");
     const QString iconPath = QFileInfo(QDir::currentPath(), "resources/nlsi.ico").exists()
         ? QDir::currentPath() + "/resources/nlsi.ico"
         : QCoreApplication::applicationDirPath() + "/resources/nlsi.ico";
@@ -893,9 +894,12 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
         "QPushButton[profileAction=\"true\"] { font: 400 11px 'Segoe UI'; color: #C83E7B; background: #FFFFFF; border: 1px solid #FFD1E6; border-radius: 5px; padding: 3px 10px; }"
         "QPushButton[profileAction=\"true\"]:hover { background: #FFF7FA; }"
         "QPushButton[profileAction=\"true\"]:disabled { color: #AFA4AA; border-color: #F0E7EB; }"
-        "QProgressBar#profileRankProgress { height: 11px; color: #665B62; background: #FCEAF2; border: none; border-radius: 5px; text-align: center; font: 400 9px 'Segoe UI'; }"
-        "QProgressBar#profileRankProgress::chunk { background: #D94F8C; border-radius: 5px; }"
+        "QProgressBar#profileTaskProgress, QProgressBar#profileRankProgress { height: 11px; color: #665B62; background: #FCEAF2; border: 1px solid #FFD1E6; border-radius: 5px; text-align: center; font: 400 9px 'Segoe UI'; }"
+        "QProgressBar#profileTaskProgress::chunk, QProgressBar#profileRankProgress::chunk { background: #D94F8C; border-radius: 4px; }"
+        "QProgressBar#profileTaskProgress:disabled { color: #A15E7D; background: #FFF7FA; }"
         "QLabel#profileRankMeta { font: 400 10px 'Segoe UI'; color: #A15E7D; }"
+        "QLabel#profileTaskStatus, QLabel#profileTaskHistoryTitle, QLabel#profileTaskHistory { font: 400 10px 'Segoe UI'; color: #665B62; }"
+        "QLabel#profileTaskHistoryTitle { font-weight: 700; color: #A15E7D; padding-top: 2px; }"
         "QLabel#profileSyncTitle { font: 700 12px 'Segoe UI'; color: #8A5A00; }"
         "QLabel#profileStatus { font: 400 10px 'Segoe UI'; color: #8A5A00; }"
         "QLabel#telemetryLabel { font: 700 %4px 'Segoe UI'; color: #A15E7D; letter-spacing: 0.35px; padding-top: 2px; }"
@@ -905,12 +909,17 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
         "QGroupBox { font: 700 %5px 'Segoe UI'; color: #28232A; background: #FFFFFF; border: 1px solid #FFD1E6; border-radius: 5px; margin-top: 7px; padding-top: 8px; }"
         "QGroupBox::title { subcontrol-origin: margin; left: 9px; padding: 0 3px; }"
         "QScrollArea { background: #FFFFFF; border: none; }"
-        "QScrollArea#dashboardScroll QScrollBar:vertical { width: 8px; background: #FFF7FA; border: none; margin: 0; }"
-        "QScrollArea#dashboardScroll QScrollBar::handle:vertical { min-height: 28px; background: #E9A9C4; border: none; border-radius: 4px; }"
-        "QScrollArea#dashboardScroll QScrollBar::handle:vertical:hover { background: #D982AA; }"
-        "QScrollArea#dashboardScroll QScrollBar::handle:vertical:pressed { background: #C85F91; }"
-        "QScrollArea#dashboardScroll QScrollBar::add-line:vertical, QScrollArea#dashboardScroll QScrollBar::sub-line:vertical { height: 0; border: none; background: none; }"
-        "QScrollArea#dashboardScroll QScrollBar::add-page:vertical, QScrollArea#dashboardScroll QScrollBar::sub-page:vertical { background: transparent; }"
+        "QScrollBar:vertical { width: 10px; background: #FFF7FA; border: 1px solid #FFD1E6; border-radius: 5px; margin: 0; }"
+        "QScrollBar:horizontal { height: 10px; background: #FFF7FA; border: 1px solid #FFD1E6; border-radius: 5px; margin: 0; }"
+        "QScrollBar::handle:vertical { min-height: 28px; background: #E9A9C4; border: 1px solid #D982AA; border-radius: 4px; margin: 1px; }"
+        "QScrollBar::handle:horizontal { min-width: 28px; background: #E9A9C4; border: 1px solid #D982AA; border-radius: 4px; margin: 1px; }"
+        "QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover { background: #D982AA; border-color: #C85F91; }"
+        "QScrollBar::handle:vertical:pressed, QScrollBar::handle:horizontal:pressed { background: #C85F91; border-color: #A93B70; }"
+        "QScrollBar::handle:vertical:disabled, QScrollBar::handle:horizontal:disabled { background: #F0DCE5; border-color: #E7CCD8; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; border: none; background: transparent; }"
+        "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; border: none; background: transparent; }"
+        "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical, QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: transparent; }"
+        "QAbstractScrollArea::corner { background: #FFF7FA; border: 1px solid #FFD1E6; }"
         "QWidget#contentWidget, QScrollArea > QWidget, QAbstractScrollArea { background: #FFFFFF; }"
     ).arg(typography::BrandName)
         .arg(typography::BrandSubtitle)
@@ -940,7 +949,7 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
     statusBar->setStyleSheet(
         "QStatusBar { background: #FFF7FA; border-top: 1px solid #FFD1E6; color: #665B62; font: 700 10px 'Segoe UI'; padding: 0 8px; }"
     );
-    statusBar->showMessage("LOCAL TELEMETRY • VERSION 1.8.6 BETA");
+    statusBar->showMessage("LOCAL TELEMETRY • VERSION 1.8.8 BETA");
     setStatusBar(statusBar);
     if (!jobHistory_.errorString().isEmpty())
     {
@@ -1129,7 +1138,7 @@ void DashboardMainWindow::buildSidebar()
     footerDivider->setFrameShadow(QFrame::Plain);
     footerDivider->setStyleSheet("QFrame { color: #FFD1E6; background: #FFD1E6; max-height: 1px; }");
     layout->addWidget(footerDivider);
-    auto* version = new QLabel("1.8.6 BETA", sidebar_);
+    auto* version = new QLabel("1.8.8 BETA", sidebar_);
     version->setObjectName("sidebarSubtitle");
     layout->addWidget(version);
 }
@@ -1483,13 +1492,46 @@ void DashboardMainWindow::buildContent()
     accountLayout->addLayout(accountText, 1);
     profileContentLayout->addWidget(accountCard);
 
+    auto* taskCard = new QGroupBox(profileContent);
+    taskCard->setObjectName("profileTaskCard");
+    auto* taskLayout = new QVBoxLayout(taskCard);
+    taskLayout->setContentsMargins(12, 12, 12, 10);
+    taskLayout->setSpacing(7);
+    auto* taskTitle = new QLabel("TASK:", taskCard);
+    taskTitle->setObjectName("profileTaskTitle");
+    taskTitle->setStyleSheet("font: 700 13px 'Segoe UI'; color: #28232A;");
+    profileTaskProgress_ = new QProgressBar(taskCard);
+    profileTaskProgress_->setObjectName("profileTaskProgress");
+    profileTaskProgress_->setRange(0, 100);
+    profileTaskProgress_->setValue(0);
+    profileTaskProgress_->setFormat("TASK DATA NOT LOADED");
+    profileTaskProgress_->setTextVisible(true);
+    profileTaskProgress_->setEnabled(false);
+    profileTaskStatus_ = new QLabel(
+        "Connect an account to load its monthly task records.", taskCard);
+    profileTaskStatus_->setObjectName("profileTaskStatus");
+    profileTaskStatus_->setWordWrap(true);
+    profileTaskHistoryTitle_ = new QLabel("TASK HISTORY", taskCard);
+    profileTaskHistoryTitle_->setObjectName("profileTaskHistoryTitle");
+    profileTaskHistoryTitle_->hide();
+    profileTaskHistory_ = new QLabel(taskCard);
+    profileTaskHistory_->setObjectName("profileTaskHistory");
+    profileTaskHistory_->setWordWrap(true);
+    profileTaskHistory_->hide();
+    taskLayout->addWidget(taskTitle);
+    taskLayout->addWidget(profileTaskProgress_);
+    taskLayout->addWidget(profileTaskStatus_);
+    taskLayout->addWidget(profileTaskHistoryTitle_);
+    taskLayout->addWidget(profileTaskHistory_);
+    profileContentLayout->addWidget(taskCard);
+
     auto* rankCard = new QGroupBox(profileContent);
     rankCard->setObjectName("profileRankCard");
     auto* rankLayout = new QVBoxLayout(rankCard);
     rankLayout->setContentsMargins(12, 12, 12, 10);
     rankLayout->setSpacing(7);
     auto* rankHeading = new QHBoxLayout();
-    auto* rankTitle = new QLabel("Driver rank:", rankCard);
+    auto* rankTitle = new QLabel("RANK:", rankCard);
     rankTitle->setObjectName("profileDetailValue");
     profileRankValue_ = new QLabel(profileUnavailable, rankCard);
     profileRankValue_->setObjectName("profileRankValue");
@@ -1962,6 +2004,9 @@ void DashboardMainWindow::clearAuthenticatedAccount(const QString& explanation,
     syncDriverId_ = 0;
     connectionRequestInFlight_ = false;
     profileRequestInFlight_ = false;
+    profileTaskRequestInFlight_ = false;
+    profileTaskRequestAccountId_ = 0;
+    ++profileTaskRequestToken_;
     syncRequestInFlight_ = false;
     syncAgainRequested_ = false;
     remoteCompletedJobs_.clear();
@@ -2020,6 +2065,7 @@ void DashboardMainWindow::setProfileUnavailable(const QString& message)
     profileDistanceValue_->setText(profileUnavailable);
     profileRankProgress_->setValue(0);
     profileRankProgress_->setFormat(profileUnavailable);
+    setProfileTaskUnavailable(message);
     profileRemainingValue_->setText(profileUnavailable);
     profileThresholdValue_->setText("Next rank at " + profileUnavailable);
     profileUsernameCopyButton_->setEnabled(false);
@@ -2056,6 +2102,249 @@ void DashboardMainWindow::updateProfileRank(const QString& serverRank,
         " to next rank");
     profileThresholdValue_->setText(
         "Next rank at " + formatDistance(nextThreshold, "km", preferences_));
+}
+
+void DashboardMainWindow::setProfileTaskUnavailable(
+    const QString& explanation,
+    const QString& progressFormat)
+{
+    if (profileTaskProgress_)
+    {
+        profileTaskProgress_->setValue(0);
+        profileTaskProgress_->setFormat(progressFormat);
+        profileTaskProgress_->setEnabled(false);
+    }
+    if (profileTaskStatus_)
+    {
+        profileTaskStatus_->setText(explanation);
+    }
+    if (profileTaskHistory_)
+    {
+        profileTaskHistory_->clear();
+        profileTaskHistory_->hide();
+    }
+    if (profileTaskHistoryTitle_)
+    {
+        profileTaskHistoryTitle_->hide();
+    }
+}
+
+bool DashboardMainWindow::updateProfileTask(const QJsonObject& payload)
+{
+    const auto validTask = [](const QJsonObject& task)
+    {
+        const QDate month = QDate::fromString(task.value("task_month").toString(),
+                                              Qt::ISODate);
+        const double target = task.value("target_distance_km").toDouble(
+            std::numeric_limits<double>::quiet_NaN());
+        const double completed = task.value("completed_distance_km").toDouble(
+            std::numeric_limits<double>::quiet_NaN());
+        const double progress = task.value("progress_percentage").toDouble(
+            std::numeric_limits<double>::quiet_NaN());
+        const QString status = task.value("status").toString();
+        const QJsonValue completedAt = task.value("completed_at_utc");
+        const QJsonValue finalizedAt = task.value("period_finalized_at_utc");
+        return month.isValid() &&
+            task.value("month_label").isString() &&
+            std::isfinite(target) && target > 0.0 &&
+            std::isfinite(completed) && completed >= 0.0 &&
+            std::isfinite(progress) && progress >= 0.0 && progress <= 100.0 &&
+            (status == "in_progress" || status == "completed" || status == "period_ended") &&
+            task.value("is_complete").isBool() &&
+            task.value("is_complete").toBool() == (status == "completed") &&
+            (completedAt.isNull() || completedAt.isString()) &&
+            (finalizedAt.isNull() || finalizedAt.isString());
+    };
+
+    const QJsonObject currentPeriod = payload.value("current_period").toObject();
+    const QString monthStart = currentPeriod.value("month_start").toString();
+    const QString monthLabel = currentPeriod.value("month_label").toString();
+    if (!QDate::fromString(monthStart, Qt::ISODate).isValid() ||
+        monthLabel.isEmpty() || !payload.value("history").isArray() ||
+        !payload.contains("task"))
+    {
+        return false;
+    }
+
+    const QJsonValue currentTaskValue = payload.value("task");
+    QJsonObject currentTask;
+    if (!currentTaskValue.isNull())
+    {
+        if (!currentTaskValue.isObject())
+        {
+            return false;
+        }
+        currentTask = currentTaskValue.toObject();
+        if (!validTask(currentTask) ||
+            currentTask.value("task_month").toString() != monthStart)
+        {
+            return false;
+        }
+    }
+
+    QStringList historyLines;
+    const QJsonArray history = payload.value("history").toArray();
+    for (const QJsonValue& value : history)
+    {
+        if (!value.isObject() || !validTask(value.toObject()))
+        {
+            return false;
+        }
+        const QJsonObject task = value.toObject();
+        if (task.value("task_month").toString() == monthStart)
+        {
+            continue;
+        }
+        const QString status = task.value("status").toString();
+        const QString statusText = status == "completed"
+            ? "Completed"
+            : (status == "period_ended" ? "Period ended" : "In progress");
+        historyLines.append(
+            QString("%1 | %2 / %3 | %4")
+                .arg(task.value("month_label").toString(),
+                     formatDistance(task.value("completed_distance_km").toDouble(),
+                                    "km", preferences_),
+                     formatDistance(task.value("target_distance_km").toDouble(),
+                                    "km", preferences_),
+                     statusText));
+    }
+
+    if (currentTask.isEmpty())
+    {
+        profileTaskProgress_->setValue(0);
+        profileTaskProgress_->setFormat("NO TASK RECORD");
+        profileTaskProgress_->setEnabled(false);
+        profileTaskStatus_->setText(
+            "No task record is initialized for " + monthLabel +
+            (historyLines.isEmpty()
+                 ? ". No earlier monthly task records are available."
+                 : ". Earlier monthly task records are listed below."));
+    }
+    else
+    {
+        const double completed = currentTask.value("completed_distance_km").toDouble();
+        const double target = currentTask.value("target_distance_km").toDouble();
+        const int percentage = static_cast<int>(std::round(
+            currentTask.value("progress_percentage").toDouble()));
+        const QString status = currentTask.value("status").toString();
+        const QString statusText = status == "completed"
+            ? "Completed"
+            : (status == "period_ended" ? "Period ended" : "In progress");
+        profileTaskProgress_->setValue((std::max)(0, (std::min)(percentage, 100)));
+        profileTaskProgress_->setFormat(
+            QString("TASK %p% | %1 / %2")
+                .arg(formatDistance(completed, "km", preferences_),
+                     formatDistance(target, "km", preferences_)));
+        profileTaskProgress_->setEnabled(true);
+        QString statusMessage = monthLabel + " | " + statusText + " | " +
+            formatDistance(completed, "km", preferences_) + " completed of " +
+            formatDistance(target, "km", preferences_);
+        const QString completedAt = currentTask.value("completed_at_utc").toString();
+        if (status == "completed" && !completedAt.isEmpty())
+        {
+            statusMessage += " | Completed at " + completedAt + " UTC";
+        }
+        profileTaskStatus_->setText(statusMessage);
+    }
+
+    profileTaskHistory_->setText(historyLines.join('\n'));
+    profileTaskHistory_->setVisible(!historyLines.isEmpty());
+    profileTaskHistoryTitle_->setVisible(!historyLines.isEmpty());
+    return true;
+}
+
+void DashboardMainWindow::requestAccountMonthlyTask(qint64 accountId)
+{
+    if (accountId <= 0 || accountId != authenticatedDriverId_ ||
+        (profileTaskRequestInFlight_ &&
+         profileTaskRequestAccountId_ == accountId) || !networkManager_)
+    {
+        return;
+    }
+    const QUrl url = apiEndpointUrl(apiSettings_.baseUrl, "monthly-task.php");
+    if (!url.isValid())
+    {
+        setProfileTaskUnavailable("The configured task API URL is invalid.");
+        return;
+    }
+
+    profileTaskRequestInFlight_ = true;
+    profileTaskRequestAccountId_ = accountId;
+    setProfileTaskUnavailable("Loading monthly task data...", "LOADING TASK DATA");
+    const quint64 requestGeneration = accountSessionGeneration_;
+    const quint64 requestToken = ++profileTaskRequestToken_;
+    QNetworkRequest request(url);
+    request.setRawHeader("Accept", "application/json");
+    request.setRawHeader("Authorization",
+        "Bearer " + apiSettings_.apiKey.trimmed().toUtf8());
+    addNgrokWarningBypassHeader(request);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::ManualRedirectPolicy);
+    QNetworkReply* reply = networkManager_->get(request);
+    reply->setProperty("nlsiAuthenticatedRequest", true);
+    QTimer::singleShot(15000, reply, [reply]()
+    {
+        if (reply->isRunning())
+        {
+            reply->abort();
+        }
+    });
+    connect(reply, &QNetworkReply::finished, this,
+            [this, reply, accountId, requestGeneration, requestToken]()
+    {
+        if (requestGeneration != accountSessionGeneration_ ||
+            accountId != authenticatedDriverId_)
+        {
+            if (profileTaskRequestToken_ == requestToken)
+            {
+                profileTaskRequestInFlight_ = false;
+                profileTaskRequestAccountId_ = 0;
+            }
+            reply->deleteLater();
+            return;
+        }
+        if (profileTaskRequestToken_ != requestToken)
+        {
+            reply->deleteLater();
+            return;
+        }
+        profileTaskRequestInFlight_ = false;
+        profileTaskRequestAccountId_ = 0;
+        const int statusCode =
+            reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const bool jsonContentType = hasJsonContentType(reply);
+        const QByteArray responseBytes = reply->readAll();
+        QJsonParseError parseError;
+        const QJsonDocument response = QJsonDocument::fromJson(responseBytes, &parseError);
+        const QJsonObject payload = response.isObject() ? response.object() : QJsonObject();
+        const double responseDriverId = payload.value("driver_id").toDouble(-1.0);
+        const bool belongsToAccount = std::isfinite(responseDriverId) &&
+            responseDriverId == static_cast<double>(accountId);
+        const bool responseValid = reply->error() == QNetworkReply::NoError &&
+            statusCode == 200 && jsonContentType &&
+            parseError.error == QJsonParseError::NoError && response.isObject() &&
+            payload.value("success").toBool(false) && belongsToAccount;
+
+        if (!responseValid || !updateProfileTask(payload))
+        {
+            if (statusCode == 401 || statusCode == 403)
+            {
+                setProfileTaskUnavailable(
+                    "The task API did not authorize this account. Refresh the profile to revalidate it.");
+            }
+            else if (reply->error() != QNetworkReply::NoError || statusCode >= 500)
+            {
+                setProfileTaskUnavailable(
+                    "Monthly task data is currently unavailable. No offline task progress is cached.");
+            }
+            else
+            {
+                setProfileTaskUnavailable(
+                    "The API returned an invalid monthly task response for this account.");
+            }
+        }
+        reply->deleteLater();
+    });
 }
 
 void DashboardMainWindow::requestCurrencyExchangeRate()
@@ -2287,6 +2576,7 @@ void DashboardMainWindow::requestAccountProfile(bool connectionTest, bool synchr
             profileEmailVisibilityButton_->setEnabled(!email.isEmpty());
             profileDriverIdCopyButton_->setEnabled(true);
             updateProfileRank(rank, qualifyingDistanceKm);
+            requestAccountMonthlyTask(accountId);
             updateApiConnectionState(ApiConnectionState::Online,
                 "The configured API is reachable and the driver key authenticated successfully.");
             profileStatus_->setText("Profile confirmed by the server.");
@@ -2614,7 +2904,9 @@ void DashboardMainWindow::fetchServerJobs(qint64 accountId, int offset, bool aft
 
 void DashboardMainWindow::uploadLocalJobs(qint64 accountId)
 {
-    if (!apiOnline_ || accountId != authenticatedDriverId_ || accountId != syncDriverId_)
+    if (!apiOnline_ ||
+        !canSynchronizeAccountJobs(authenticatedRole_, authenticatedDriverId_, accountId) ||
+        accountId != syncDriverId_)
     {
         return;
     }
@@ -2646,11 +2938,7 @@ void DashboardMainWindow::uploadLocalJobs(qint64 accountId)
             syncUploadHadFailure_ = true;
             continue;
         }
-        if (state && state->accountId != accountId)
-        {
-            continue;
-        }
-        if (!state && authenticatedRole_ != "DRIVER")
+        if (!shouldUploadLocalJob(accountId, state))
         {
             continue;
         }
@@ -2678,6 +2966,7 @@ void DashboardMainWindow::uploadLocalJobs(qint64 accountId)
             syncUploadHadFailure_ = true;
             continue;
         }
+        record.serverJobId = pending.serverJobId.toStdString();
         pendingSyncJobs_.push_back(std::move(record));
     }
     syncUploadOffset_ = 0;
@@ -2759,63 +3048,23 @@ void DashboardMainWindow::uploadNextJobBatch(qint64 accountId)
             reply->deleteLater();
             return;
         }
-        QJsonParseError parseError;
-        const QJsonDocument document = QJsonDocument::fromJson(responseBytes, &parseError);
-        const QJsonObject response = document.isObject() ? document.object() : QJsonObject();
-        const QJsonArray acknowledgements = response.value("acknowledgements").toArray();
-        bool validAcknowledgement = reply->error() == QNetworkReply::NoError &&
-            statusCode == 200 && jsonContentType &&
-            parseError.error == QJsonParseError::NoError &&
-            response.value("success").toBool() && response.value("committed").toBool() &&
-            response.value("driver_id").isDouble() &&
-            response.value("driver_id").toDouble(-1.0) == static_cast<double>(accountId) &&
-            acknowledgements.size() == static_cast<int>(batch.size());
-        std::map<std::string, QString> serverIds;
-        if (validAcknowledgement)
-        {
-            for (const QJsonValue& value : acknowledgements)
-            {
-                if (!value.isObject())
-                {
-                    validAcknowledgement = false;
-                    break;
-                }
-                const QJsonObject ack = value.toObject();
-                if (!ack.value("acknowledged").toBool() ||
-                    !ack.value("local_job_id").isString() ||
-                    !ack.value("job_id").isString() ||
-                    ack.value("job_id").toString().trimmed().isEmpty())
-                {
-                    validAcknowledgement = false;
-                    break;
-                }
-                serverIds[ack.value("local_job_id").toString().toStdString()] =
-                    ack.value("job_id").toString();
-            }
-            for (const JobRecord& record : batch)
-            {
-                if (serverIds.find(record.id) == serverIds.end())
-                {
-                    validAcknowledgement = false;
-                    break;
-                }
-            }
-        }
+        const auto serverIds = validateJobSyncResponse(
+            statusCode, reply->error() == QNetworkReply::NoError, jsonContentType,
+            responseBytes, accountId, batch);
+        const bool validAcknowledgement = serverIds.has_value();
         for (const JobRecord& record : batch)
         {
-            JobSyncState state;
-            state.accountId = accountId;
-            if (validAcknowledgement)
+            const QString failureCode = statusCode == 401 || statusCode == 403
+                ? "authentication_failed"
+                : statusCode == 429 ? "rate_limited" : "upload_failed";
+            const QString acknowledgedServerId = validAcknowledgement
+                ? serverIds->at(record.id)
+                : QString();
+            const JobSyncState state = makeJobSyncStateAfterUpload(
+                accountId, QString::fromStdString(record.serverJobId),
+                acknowledgedServerId, validAcknowledgement ? QString() : failureCode);
+            if (!validAcknowledgement)
             {
-                state.status = "synced";
-                state.serverJobId = serverIds[record.id];
-            }
-            else
-            {
-                state.status = "failed";
-                state.error = statusCode == 401 || statusCode == 403
-                    ? "authentication_failed"
-                    : statusCode == 429 ? "rate_limited" : "upload_failed";
                 syncUploadHadFailure_ = true;
             }
             QString stateError;

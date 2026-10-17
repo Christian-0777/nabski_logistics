@@ -1,3 +1,83 @@
+# NLSI Exclusive Logbook v1.8.8 Beta
+
+## What's new
+
+- Style vertical and horizontal scrollbars throughout the dashboard, job
+  history, profile, and dialogs with the existing NLSI pink/white theme,
+  including track, border, radius, hover, pressed, and disabled states.
+- Add the authenticated, read-only `monthly-task.php` API response. It returns
+  the current driver's existing monthly task row and history from
+  `monthly_tasks`, including period, target, completed distance, progress,
+  status, and completion/finalization timestamps.
+- Show the current monthly TASK progress and history above the existing RANK
+  card in Profile. Missing current-month rows and API/offline errors are shown
+  explicitly instead of being treated as zero progress.
+- Preserve the v1.8.7 Beta job-sync eligibility and ownership rules for
+  DRIVER, MANAGER, CEO, and ADMIN accounts, including retryable uploads and
+  strict server acknowledgement validation.
+- Keep application, plugin, installer, and release metadata explicitly at
+  v1.8.8 Beta. The installer keeps the stable update identity and does not
+  replace per-user profile data.
+
+## Database and limitations
+
+- No database migration is required. The API reads existing
+  `monthly_tasks` records and never initializes or rolls them over.
+- A current-month record may be absent until existing website task processing
+  creates it. In that case the desktop reports that no task row is initialized
+  and still displays available history.
+- Monthly task progress is not cached offline. The Profile TASK card reports
+  API errors and offline state rather than presenting stale or fabricated
+  progress.
+
+## Validation results
+
+- Desktop Release CTest: **5/5 passed** (`nlsi_telemetry_tests`,
+  `nlsi_job_history_tests`, `nlsi_job_sync_protocol_tests`,
+  `nlsi_preferences_tests`, and `nlsi_dashboard_ui_tests`).
+- Website PHP tests: **8/8 passed**, including monthly task lifecycle and
+  website API forwarding.
+- Shared API PHP tests: **4/4 passed**, including driver authentication,
+  job-sync response handling, and monthly-task ownership/read-only behavior.
+- Release packaging and final artifact hashes are recorded in
+  `releases\1.8.8-beta\manifest.sha256` after a successful release build.
+
+## Release outputs
+
+- x64 desktop executable: `releases\1.8.8-beta\payload\nlsi_dashboard.exe`
+- SCS plugin DLLs: `payload\plugin\win_x64\nlsi_scs_plugin.dll` and
+  `payload\plugin\win_x86\nlsi_scs_plugin.dll`
+- Installer: `releases\1.8.8-beta\NLSI-Exclusive-Logbook-v1.8.8-beta-Setup.exe`
+- Release SHA-256 manifest: `releases\1.8.8-beta\manifest.sha256`
+
+See `docs\RELEASE-NOTES-v1.8.8-beta.md` and
+`docs\INSTALLATION-v1.8.8-beta.md` for the versioned release and install
+details.
+
+---
+
+# NLSI Exclusive Logbook v1.8.7 Beta
+
+## What's new
+
+- Allow DRIVER, MANAGER, CEO, and linked ADMIN accounts to upload eligible
+  completed local jobs assigned to their authenticated driver identity, even
+  when no per-account sync state exists yet.
+- Keep failed uploads pending and retryable; require a committed HTTP 200 JSON
+  response with matching driver and exact local/server job acknowledgements
+  before marking jobs synced.
+- Add a TASK section before RANK in Profile. Task progress is honestly reported
+  as unavailable because the existing desktop API exposes neither monthly task
+  fields nor a monthly-task read endpoint. The website, API, and schema remain
+  unchanged.
+- Build version-locked x64/x86 telemetry plugins, desktop runtime payload, and
+  Windows installer for v1.8.7 Beta.
+
+See `docs/RELEASE-NOTES-v1.8.7-beta.md` for synchronization behavior, the
+missing monthly-task contract, and release contents.
+
+---
+
 # NLSI Exclusive Logbook v1.8.6 Beta
 
 ## What's new

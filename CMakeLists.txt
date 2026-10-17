@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(nlsi_exclusive_logbook VERSION 1.8.6 LANGUAGES CXX)
+project(nlsi_exclusive_logbook VERSION 1.8.8 LANGUAGES CXX)
 
 if(WIN32)
     enable_language(RC)
@@ -74,6 +74,16 @@ if(BUILD_DASHBOARD OR BUILD_TESTING)
     endif()
     target_compile_features(nlsi_preferences PUBLIC cxx_std_17)
 
+    add_library(nlsi_job_sync_protocol STATIC
+        src/shared/JobSyncProtocol.cpp
+        src/shared/JobSyncProtocol.h
+    )
+    target_include_directories(nlsi_job_sync_protocol PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/shared
+    )
+    target_link_libraries(nlsi_job_sync_protocol PUBLIC nlsi_preferences)
+    target_compile_features(nlsi_job_sync_protocol PUBLIC cxx_std_17)
+
     add_library(nlsi_display_formatting STATIC
         src/shared/DisplayFormatting.cpp
         src/shared/MeasurementFormatting.cpp
@@ -117,7 +127,12 @@ if(BUILD_DASHBOARD)
             ${CMAKE_CURRENT_SOURCE_DIR}/resources
     )
 
-    target_link_libraries(nlsi_dashboard PRIVATE ${QT_LIBS} nlsi_ipc nlsi_display_formatting)
+    target_link_libraries(nlsi_dashboard PRIVATE
+        ${QT_LIBS}
+        nlsi_ipc
+        nlsi_display_formatting
+        nlsi_job_sync_protocol
+    )
 endif()
 
 add_library(nlsi_scs_plugin SHARED
@@ -183,6 +198,12 @@ if(BUILD_TESTING)
     target_compile_features(nlsi_job_history_tests PRIVATE cxx_std_17)
     target_link_libraries(nlsi_job_history_tests PRIVATE ${QT_LIBS} nlsi_ipc)
     add_test(NAME nlsi_job_history_tests COMMAND nlsi_job_history_tests)
+    add_executable(nlsi_job_sync_protocol_tests
+        tests/job_sync_protocol_tests.cpp
+    )
+    target_compile_features(nlsi_job_sync_protocol_tests PRIVATE cxx_std_17)
+    target_link_libraries(nlsi_job_sync_protocol_tests PRIVATE nlsi_job_sync_protocol)
+    add_test(NAME nlsi_job_sync_protocol_tests COMMAND nlsi_job_sync_protocol_tests)
     add_executable(nlsi_preferences_tests
         tests/preferences_tests.cpp
     )
@@ -204,6 +225,9 @@ if(BUILD_TESTING)
         set_tests_properties(nlsi_job_history_tests PROPERTIES
             ENVIRONMENT "PATH=${_qt_bin_dir}"
         )
+        set_tests_properties(nlsi_job_sync_protocol_tests PROPERTIES
+            ENVIRONMENT "PATH=${_qt_bin_dir}"
+        )
         set_tests_properties(nlsi_preferences_tests PROPERTIES
             ENVIRONMENT "PATH=${_qt_bin_dir}"
         )
@@ -222,7 +246,12 @@ if(BUILD_TESTING)
                 ${CMAKE_CURRENT_SOURCE_DIR}/src/shared
         )
         target_compile_features(nlsi_dashboard_ui_tests PRIVATE cxx_std_17)
-        target_link_libraries(nlsi_dashboard_ui_tests PRIVATE ${QT_LIBS} nlsi_ipc nlsi_display_formatting)
+        target_link_libraries(nlsi_dashboard_ui_tests PRIVATE
+            ${QT_LIBS}
+            nlsi_ipc
+            nlsi_display_formatting
+            nlsi_job_sync_protocol
+        )
         add_test(NAME nlsi_dashboard_ui_tests COMMAND nlsi_dashboard_ui_tests)
         set_tests_properties(nlsi_dashboard_ui_tests PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen;PATH=${_qt_bin_dir}"

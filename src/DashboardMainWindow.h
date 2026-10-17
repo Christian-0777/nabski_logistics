@@ -5,6 +5,7 @@
 #include <QHash>
 #include <QMainWindow>
 #include <QByteArray>
+#include <QJsonObject>
 #include <QString>
 
 #include "DisplayFormatting.h"
@@ -63,6 +64,10 @@ private:
                                    ApiConnectionState state = ApiConnectionState::LocalMode,
                                    bool transportReachable = false);
     void setProfileUnavailable(const QString& message);
+    void setProfileTaskUnavailable(const QString& explanation,
+                                   const QString& progressFormat = "TASK DATA UNAVAILABLE");
+    void requestAccountMonthlyTask(qint64 accountId);
+    bool updateProfileTask(const QJsonObject& payload);
     void updateProfileRank(const QString& serverRank, double qualifyingDistanceKm);
     void requestCurrencyExchangeRate();
     void updateNavigationState(QPushButton* activeButton);
@@ -124,12 +129,16 @@ private:
     QLabel* profileHeaderRole_ = nullptr;
     QLabel* profileRemainingValue_ = nullptr;
     QLabel* profileThresholdValue_ = nullptr;
+    QLabel* profileTaskStatus_ = nullptr;
+    QLabel* profileTaskHistory_ = nullptr;
+    QLabel* profileTaskHistoryTitle_ = nullptr;
     QLabel* profileStatus_ = nullptr;
     QPushButton* refreshProfileButton_ = nullptr;
     QPushButton* profileUsernameCopyButton_ = nullptr;
     QPushButton* profileEmailCopyButton_ = nullptr;
     QPushButton* profileEmailVisibilityButton_ = nullptr;
     QPushButton* profileDriverIdCopyButton_ = nullptr;
+    QProgressBar* profileTaskProgress_ = nullptr;
     QProgressBar* profileRankProgress_ = nullptr;
     QLabel* connectionModeLabel_ = nullptr;
     QNetworkAccessManager* networkManager_ = nullptr;
@@ -154,6 +163,9 @@ private:
     std::optional<double> profileQualifyingDistanceKm_;
     bool connectionRequestInFlight_ = false;
     bool profileRequestInFlight_ = false;
+    bool profileTaskRequestInFlight_ = false;
+    qint64 profileTaskRequestAccountId_ = 0;
+    quint64 profileTaskRequestToken_ = 0;
     bool apiOnline_ = false;
     bool apiTransportReachable_ = false;
     bool profileDataAvailable_ = false;
