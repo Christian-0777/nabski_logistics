@@ -508,39 +508,80 @@ QString recordDuration(const JobRecord& record, const std::string& key, double m
         : unavailable;
 }
 
+QString normalizedLocationValue(const QString& value)
+{
+    const QString trimmed = value.trimmed();
+    return trimmed.isEmpty() || trimmed.compare(unavailable, Qt::CaseInsensitive) == 0
+        ? QString()
+        : trimmed;
+}
+
+QString formatCityCountry(const QString& city, const QString& country)
+{
+    const QString normalizedCity = normalizedLocationValue(city);
+    const QString normalizedCountry = normalizedLocationValue(country);
+
+    if (normalizedCity.isEmpty() && normalizedCountry.isEmpty())
+    {
+        return unavailable;
+    }
+    if (normalizedCity.isEmpty())
+    {
+        return normalizedCountry;
+    }
+    if (normalizedCountry.isEmpty())
+    {
+        return normalizedCity;
+    }
+    if (normalizedCountry.compare(normalizedCity, Qt::CaseInsensitive) == 0)
+    {
+        return normalizedCity;
+    }
+    if (normalizedCity.contains(normalizedCountry, Qt::CaseInsensitive) ||
+        normalizedCountry.contains(normalizedCity, Qt::CaseInsensitive))
+    {
+        return normalizedCity;
+    }
+    return QString("%1, %2").arg(normalizedCity, normalizedCountry);
+}
+
 QString recordLocation(const JobRecord& record, const std::string& cityKey, const std::string& countryKey)
 {
     const QString city = recordValue(record, cityKey);
     const QString country = recordValue(record, countryKey);
-    if (city == unavailable && country == unavailable)
-    {
-        return unavailable;
-    }
-    return uppercaseDisplayText(QString("%1, %2").arg(city, country));
+    const QString formatted = formatCityCountry(city, country);
+    return formatted == unavailable ? unavailable : uppercaseDisplayText(formatted);
 }
 
 QString currentJobCompanyCity(const TelemetrySnapshot& snapshot,
                               const std::string& companyKey,
-                              const std::string& cityKey)
+                              const std::string& cityKey,
+                              const std::string& countryKey = std::string())
 {
     const auto availableValue = [&](const std::string& key)
     {
         const auto it = snapshot.values.find(key);
         return it == snapshot.values.end() || !it->second.available
             ? unavailable
-            : uppercaseDisplayText(QString::fromStdString(it->second.value));
+            : uppercaseDisplayText(QString::fromStdString(it->second.value).trimmed());
     };
     const QString company = availableValue(companyKey);
     const QString city = availableValue(cityKey);
+    QString country;
+    if (!countryKey.empty())
+    {
+        country = availableValue(countryKey);
+    }
+    const QString location = uppercaseDisplayText(formatCityCountry(city, country));
     if (company == unavailable)
     {
-        return city;
+        return location;
     }
-    if (city == unavailable)
+    if (location == unavailable)
     {
         return company;
     }
-    return QString("%1 - %2").arg(company, city);
+    return QString("%1 - %2").arg(company, location);
 }
 
 QString recordAverageFuelConsumption(const JobRecord& record, const UserPreferences& preferences)
@@ -807,7 +848,7 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
     const bool profileLoaded = profileStore_.load(preferences_, &profileError);
     const bool apiSettingsLoaded = profileStore_.loadApiSettings(apiSettings_, &apiSettingsLoadError_);
     networkManager_ = new QNetworkAccessManager(this);
-    setWindowTitle("NLSI Exclusive Logbook 1.8.5 Beta");
+    setWindowTitle("NLSI Exclusive Logbook 1.8.6 Beta");
     const QString iconPath = QFileInfo(QDir::currentPath(), "resources/nlsi.ico").exists()
         ? QDir::currentPath() + "/resources/nlsi.ico"
         : QCoreApplication::applicationDirPath() + "/resources/nlsi.ico";
@@ -899,7 +940,7 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
     statusBar->setStyleSheet(
         "QStatusBar { background: #FFF7FA; border-top: 1px solid #FFD1E6; color: #665B62; font: 700 10px 'Segoe UI'; padding: 0 8px; }"
     );
-    statusBar->showMessage("LOCAL TELEMETRY • VERSION 1.8.5 BETA");
+    statusBar->showMessage("LOCAL TELEMETRY • VERSION 1.8.6 BETA");
     setStatusBar(statusBar);
     if (!jobHistory_.errorString().isEmpty())
     {
@@ -1088,7 +1129,7 @@ void DashboardMainWindow::buildSidebar()
     footerDivider->setFrameShadow(QFrame::Plain);
     footerDivider->setStyleSheet("QFrame { color: #FFD1E6; background: #FFD1E6; max-height: 1px; }");
     layout->addWidget(footerDivider);
-    auto* version = new QLabel("1.8.5 BETA", sidebar_);
+    auto* version = new QLabel("1.8.6 BETA", sidebar_);
     version->setObjectName("sidebarSubtitle");
     layout->addWidget(version);
 }
@@ -3508,8 +3549,10 @@ void DashboardMainWindow::applySnapshot(const TelemetrySnapshot& snapshot)
             set(incomeValue_, unavailable);
         }
     }
-    set(fromValue_, currentJobCompanyCity(viewSnapshot, "job.source_company", "job.source_city"));
-    set(toValue_, currentJobCompanyCity(viewSnapshot, "job.destination_company", "job.destination_city"));
+    set(fromValue_, currentJobCompanyCity(viewSnapshot, "job.source_company", "job.source_city",
+                                        "job.source_country"));
+    set(toValue_, currentJobCompanyCity(viewSnapshot, "job.destination_company", "job.destination_city",
+                                      "job.destination_country"));
 
     {
         const auto* planned = findField("job.planned_distance_km");

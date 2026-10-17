@@ -1,28 +1,20 @@
-# NLSI Exclusive Logbook v1.8.5 Beta
+# NLSI Exclusive Logbook v1.8.6 Beta
 
 ## What's new
 
-- Show API authentication lifecycle states and only show ONLINE after the
-  server-issued profile is validated.
-- Display the server-issued account role and driver rank independently; clear
-  verified profile values when authentication is lost.
-- Keep a verified profile visible when a job-sync endpoint fails, distinguish
-  profile authentication from API reachability, and log redacted response
-  diagnostics for API contract failures.
-- Bypass ngrok's browser interstitial for API requests to configured ngrok
-  hosts while keeping strict response validation enabled.
-- Forward website-proxied `job-sync.php` requests to the central API so that
-  profile validation and job synchronization use consistent routes.
-- Keep local jobs and history intact when connectivity, authentication, or job
-  synchronization fails. A job is marked synced only after a matching,
-  committed server acknowledgement.
+- Keep origin/destination country display guarded against missing, duplicated,
+  or malformed values while preserving the visible company and city text.
+- Avoid displaying malformed route strings such as `City, —` or `, Country`
+  when country data is unavailable or not reliable.
+- Preserve the existing country lookup behavior already implemented in the
+  current codebase and keep the dashboard compatible with SCSSDK-only telemetry.
 - Rebuild and stage the x64 dashboard and x64/x86 telemetry plugins into a
   clean, version-locked release payload before compiling the installer.
 - Update application, plugin, installer, and documentation metadata to
-  v1.8.5 Beta. This remains a Beta release.
+  v1.8.6 Beta. This remains a Beta release.
 
-See `docs/RELEASE-NOTES-v1.8.5-beta.md` for profile, sync, and packaging
-validation details.
+See `docs/RELEASE-NOTES-v1.8.6-beta.md` for profile, sync, packaging, and
+country-lookup validation details.
 
 ---
 

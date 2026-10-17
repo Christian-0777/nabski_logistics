@@ -39,7 +39,7 @@ database. Before deploying the matching server-side changes:
 
 1. Back up the database.
 2. Apply
-   `../../nlsi_vtc/database/migrations/006_admin_roles_and_driver_links.sql`.
+   `../../../../nlsi_vtc/database/migrations/006_admin_roles_and_driver_links.sql`.
 3. Deploy the matching API and driver portal files.
 4. Use the existing setup flow only for initial ADMIN bootstrap. Public
    administrator registration is disabled; an ADMIN account must create

@@ -34,7 +34,7 @@
 ## Server rollout
 
 Back up the database before updating the website/API. Apply
-`../../nlsi_vtc/database/migrations/006_admin_roles_and_driver_links.sql`
+`../../../../nlsi_vtc/database/migrations/006_admin_roles_and_driver_links.sql`
 before deploying the matching profile endpoint, because that endpoint reads
 the new role and driver-link fields. The migration has rollback SQL comments;
 review those carefully and restore from the backup if rollback is required.

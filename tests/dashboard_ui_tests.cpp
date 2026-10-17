@@ -51,9 +51,9 @@ int main(int argc, char** argv)
     }
     const QString dashboardProfilePath = dashboardProfileDirectory.filePath("profile.nlsi");
     nlsi::DashboardMainWindow window(nullptr, QString(), dashboardProfilePath);
-    if (window.windowTitle() != "NLSI Exclusive Logbook 1.8.5 Beta")
+    if (window.windowTitle() != "NLSI Exclusive Logbook 1.8.6 Beta")
     {
-        std::cerr << "The dashboard window title does not report v1.8.5 Beta.\n";
+        std::cerr << "The dashboard window title does not report v1.8.6 Beta.\n";
         return 1;
     }
     auto* jobSyncTimer = window.findChild<QTimer*>("jobSyncTimer");
