@@ -2,21 +2,18 @@
 
 **Windows telemetry dashboard and delivery logbook for Euro Truck Simulator 2 and American Truck Simulator.**
 
-[![Latest verified release](https://img.shields.io/badge/release-v1.8.8%20Beta-e05a98)](https://github.com/Christian-0777/nabski_logistics/releases/tag/v1.8.8-beta)
+[![Latest documented release](https://img.shields.io/badge/release-v1.9.4%20Beta-e05a98)](https://github.com/Christian-0777/nabski_logistics/releases/tag/v1.9.4-beta)
 [![Status](https://img.shields.io/badge/status-beta-orange)](https://github.com/Christian-0777/nabski_logistics/releases)
 
-NLSI Exclusive Logbook is a Windows desktop application for viewing available truck-simulator telemetry and maintaining delivery records. It is developed for NLSI VTC and uses the SCS Telemetry SDK integration for supported games.
-
-> **Project status: Beta / active development.** The latest published GitHub release verified in the repository review is **v1.8.8 Beta**. Release-note documents for v1.9.0 through v1.9.4 Beta have also been supplied for this documentation. Their inclusion here records the documented changes; it does not independently confirm that each version was published as a GitHub release.
+> **Project status: Beta / active development.** Current documented version: **v1.9.4 Beta**.
 
 ## Download
 
-- **[Download NLSI Exclusive Logbook v1.8.8 Beta](https://github.com/Christian-0777/nabski_logistics/releases/tag/v1.8.8-beta)**
+- **[Download NLSI Exclusive Logbook v1.9.4 Beta](https://github.com/Christian-0777/nabski_logistics/releases/tag/v1.9.4-beta)**
 - [View all published releases](https://github.com/Christian-0777/nabski_logistics/releases)
 - [Detailed release notes](RELEASE_NOTES.md)
 
-Download installers only from the project's official GitHub Releases page. Do not use executables or DLLs from unofficial mirrors.
-
+Download installers only from the project's official GitHub Releases page.
 ## Supported games
 
 | Game | Executable | Telemetry integration |
