@@ -114,6 +114,8 @@ std::string jobStatusToString(JobStatus status)
     {
     case JobStatus::Active:
         return "ACTIVE";
+    case JobStatus::Paused:
+        return "PAUSED";
     case JobStatus::Delivered:
         return "DELIVERED";
     case JobStatus::Cancelled:
@@ -130,6 +132,10 @@ JobStatus jobStatusFromString(const std::string& text)
     if (normalized == "active")
     {
         return JobStatus::Active;
+    }
+    if (normalized == "paused")
+    {
+        return JobStatus::Paused;
     }
     if (normalized == "delivered" || normalized == "completed")
     {

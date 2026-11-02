@@ -4,12 +4,16 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$buildDir = Join-Path $root 'build\release-v1.8.8-beta-x64'
-$buildX86Dir = Join-Path $root 'build\release-v1.8.8-beta-x86-plugin'
-$releaseDir = Join-Path $root 'releases\1.8.8-beta'
+$buildDir = Join-Path $root 'build\release-v1.9.4-beta-x64'
+$buildX86Dir = Join-Path $root 'build\release-v1.9.4-beta-x86-plugin'
+$releaseDir = Join-Path $root 'releases\1.9.4-beta'
 $qtDir = 'C:\Qt\6.12.0\msvc2022_64'
 $qtBin = Join-Path $qtDir 'bin'
 $ninja = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe'
+$ninjaCommand = Get-Command ninja.exe -ErrorAction SilentlyContinue
+if (-not (Test-Path -LiteralPath $ninja) -and $ninjaCommand) {
+    $ninja = $ninjaCommand.Source
+}
 $vsDevCmd = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat'
 $windeployqt = Join-Path $qtBin 'windeployqt.exe'
 $isccCandidates = @(
@@ -39,8 +43,16 @@ if (-not (Test-Path (Join-Path $qtDir 'lib\cmake\Qt6Widgets\Qt6WidgetsConfig.cma
     throw "Qt 6 MSVC x64 Widgets package is missing from $qtDir."
 }
 
-$buildCommand = 'cd /d "{0}" && set "PATH={1};%PATH%" && call "{2}" -arch=amd64 -host_arch=amd64 && cmake --fresh -S . -B "{3}" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_MAKE_PROGRAM="{4}" -DCMAKE_PREFIX_PATH="{5}" -DBUILD_TESTING=ON -DBUILD_DASHBOARD=ON && cmake --build "{3}" --config Release && ctest --test-dir "{3}" --output-on-failure' -f `
-    $root, $qtBin, $vsDevCmd, $buildDir, $ninja, $qtDir
+$webpBuildScript = Join-Path $PSScriptRoot 'build-webp-plugin.ps1'
+& $webpBuildScript -QtDir $qtDir -VsDevCmd $vsDevCmd -NinjaPath $ninja
+$webpPluginRoot = Join-Path $root 'build\qt-webp-v6.12.0-msvc2022-x64'
+$webpPlugin = Join-Path $webpPluginRoot 'imageformats\qwebp.dll'
+if (-not (Test-Path -LiteralPath $webpPlugin)) {
+    throw "The matching Qt WebP plugin build did not produce: $webpPlugin"
+}
+
+$buildCommand = 'cd /d "{0}" && set "PATH={1};%PATH%" && call "{2}" -arch=amd64 -host_arch=amd64 && cmake --fresh -S . -B "{3}" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_MAKE_PROGRAM="{4}" -DCMAKE_PREFIX_PATH="{5}" -DNLSI_QT_WEBP_PLUGIN_ROOT="{6}" -DBUILD_TESTING=ON -DBUILD_DASHBOARD=ON && cmake --build "{3}" --config Release && ctest --test-dir "{3}" --output-on-failure' -f `
+    $root, $qtBin, $vsDevCmd, $buildDir, $ninja, $qtDir, $webpPluginRoot
 & $env:ComSpec /c $buildCommand
 if ($LASTEXITCODE -ne 0) {
     throw "Fresh x64 Release configure, build, or automated tests failed with exit code $LASTEXITCODE."
@@ -101,13 +113,13 @@ if ($x64InspectionText -match '(?i)(MSVCP|VCRUNTIME)140' -or
 }
 
 $fileVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($dashboardExe)
-if ($fileVersion.FileVersion -ne '1.8.8.0' -or $fileVersion.ProductVersion -ne '1.8.8 Beta') {
+if ($fileVersion.FileVersion -ne '1.9.4.0' -or $fileVersion.ProductVersion -ne '1.9.4 Beta') {
     throw "Dashboard executable version metadata is incorrect: file=$($fileVersion.FileVersion), product=$($fileVersion.ProductVersion)"
 }
 foreach ($plugin in @($pluginX64Dll, $pluginX86Dll)) {
     $pluginVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($plugin)
-    if ($pluginVersion.FileVersion -ne '1.8.8.0' -or
-        $pluginVersion.ProductVersion -ne '1.8.8 Beta') {
+    if ($pluginVersion.FileVersion -ne '1.9.4.0' -or
+        $pluginVersion.ProductVersion -ne '1.9.4 Beta') {
         throw "Plugin version metadata is incorrect for ${plugin}: file=$($pluginVersion.FileVersion), product=$($pluginVersion.ProductVersion)"
     }
 }
@@ -130,7 +142,7 @@ Copy-Item $dashboardExe $payloadDir
     Copy-Item (Join-Path $root 'resources\nlsi.ico') (Join-Path $payloadResources 'nlsi.ico') -Force
     $payloadDocs = Join-Path $payloadDir 'docs'
     New-Item -ItemType Directory -Force -Path $payloadDocs | Out-Null
-    foreach ($documentName in @('RELEASE-NOTES-v1.8.8-beta.md', 'INSTALLATION-v1.8.8-beta.md')) {
+    foreach ($documentName in @('RELEASE-NOTES-v1.9.4-beta.md', 'INSTALLATION-v1.9.4-beta.md')) {
         $document = Join-Path $root "docs\$documentName"
         if (-not (Test-Path -LiteralPath $document)) {
             throw "Required release document is missing: $document"
@@ -144,6 +156,15 @@ Copy-Item $dashboardExe $payloadDir
     if ($LASTEXITCODE -ne 0) {
         throw "Qt runtime deployment failed with exit code $LASTEXITCODE."
     }
+    $payloadImageFormats = Join-Path $payloadDir 'imageformats'
+    New-Item -ItemType Directory -Force -Path $payloadImageFormats | Out-Null
+    Copy-Item -LiteralPath $webpPlugin -Destination $payloadImageFormats -Force
+    $payloadLicenses = Join-Path $payloadDir 'licenses\qtimageformats'
+    New-Item -ItemType Directory -Force -Path $payloadLicenses | Out-Null
+    Copy-Item -LiteralPath (Join-Path $webpPluginRoot 'QtImageFormats-BSD-3-Clause.txt') `
+        -Destination $payloadLicenses -Force
+    Copy-Item -LiteralPath (Join-Path $webpPluginRoot 'libwebp-COPYING.txt') `
+        -Destination $payloadLicenses -Force
     $vcRedistBootstrapper = Join-Path $payloadDir 'vc_redist.x64.exe'
     if (Test-Path $vcRedistBootstrapper) {
         Remove-Item -LiteralPath $vcRedistBootstrapper -Force
@@ -165,7 +186,8 @@ Copy-Item $dashboardExe $payloadDir
 
     $requiredQtFiles = @(
         'Qt6Core.dll', 'Qt6Gui.dll', 'Qt6Widgets.dll',
-        'platforms\qwindows.dll'
+        'platforms\qwindows.dll',
+        'imageformats\qjpeg.dll', 'imageformats\qwebp.dll'
     )
     foreach ($relativeFile in $requiredQtFiles) {
         if (-not (Test-Path (Join-Path $payloadDir $relativeFile))) {
@@ -184,14 +206,45 @@ Copy-Item $dashboardExe $payloadDir
     )
     foreach ($stagedArtifact in $stagedVersions) {
         $stagedVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($stagedArtifact)
-        if ($stagedVersion.FileVersion -ne '1.8.8.0' -or
-            $stagedVersion.ProductVersion -ne '1.8.8 Beta') {
-            throw "Staged artifact is not a verified 1.8.8 Beta binary: $stagedArtifact"
+        if ($stagedVersion.FileVersion -ne '1.9.4.0' -or
+            $stagedVersion.ProductVersion -ne '1.9.4 Beta') {
+            throw "Staged artifact is not a verified 1.9.4 Beta binary: $stagedArtifact"
         }
     }
     foreach ($resourceRelative in @('resources\nlsi.ico', 'resources\nlsi.png')) {
         if (-not (Test-Path (Join-Path $payloadDir $resourceRelative))) {
             throw "A required product resource is missing from the package: $resourceRelative"
+        }
+    }
+    $imageDecoderTest = Join-Path $buildDir 'bin\nlsi_image_decode_tests.exe'
+    if (-not (Test-Path -LiteralPath $imageDecoderTest)) {
+        throw "The packaged image decoder test executable is missing: $imageDecoderTest"
+    }
+    $oldPath = $env:PATH
+    $oldPluginPath = $env:QT_PLUGIN_PATH
+    $oldWebpPluginRoot = $env:NLSI_QT_WEBP_PLUGIN_ROOT
+    try {
+        $env:PATH = "$payloadDir;$oldPath"
+        $env:QT_PLUGIN_PATH = $payloadDir
+        $env:NLSI_QT_WEBP_PLUGIN_ROOT = $payloadDir
+        & $imageDecoderTest
+        if ($LASTEXITCODE -ne 0) {
+            throw "The installed-runtime JPEG/PNG/WebP decoder test failed with exit code $LASTEXITCODE."
+        }
+    }
+    finally {
+        $env:PATH = $oldPath
+        if ($null -eq $oldPluginPath) {
+            Remove-Item Env:\QT_PLUGIN_PATH -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:QT_PLUGIN_PATH = $oldPluginPath
+        }
+        if ($null -eq $oldWebpPluginRoot) {
+            Remove-Item Env:\NLSI_QT_WEBP_PLUGIN_ROOT -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:NLSI_QT_WEBP_PLUGIN_ROOT = $oldWebpPluginRoot
         }
     }
     $managedFiles = Get-ChildItem -LiteralPath $payloadDir -Recurse -File |
@@ -257,15 +310,15 @@ Copy-Item $dashboardExe $payloadDir
     if (-not $SkipInstaller) {
         New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
         $installerScript = Join-Path $PSScriptRoot 'NLSI-Exclusive-Logbook.iss'
-        $installer = Join-Path $releaseDir 'NLSI-Exclusive-Logbook-v1.8.8-beta-Setup.exe'
+        $installer = Join-Path $releaseDir 'NLSI-Exclusive-Logbook-v1.9.4-beta-Setup.exe'
         $installerSource = Get-Content -LiteralPath $installerScript -Raw
         $requiredInstallerRules = @(
             'AppId={{B58E42DA-BC15-4FD0-9DCC-44E4E14D374D}',
-            '#define MyAppVersion "1.8.8 Beta"',
-            'OutputDir=..\releases\1.8.8-beta',
-            'OutputBaseFilename=NLSI-Exclusive-Logbook-v1.8.8-beta-Setup',
-            'VersionInfoVersion=1.8.8.0',
-            'VersionInfoProductVersion=1.8.8.0',
+            '#define MyAppVersion "1.9.4 Beta"',
+            'OutputDir=..\releases\1.9.4-beta',
+            'OutputBaseFilename=NLSI-Exclusive-Logbook-v1.9.4-beta-Setup',
+            'VersionInfoVersion=1.9.4.0',
+            'VersionInfoProductVersion=1.9.4.0',
             "TikTokProfileUrl = 'https://www.tiktok.com/@nabskiplays';",
             "TikTokFollowCheck.Caption := 'Follow Nabski Plays on TikTok';",
             'TikTokFollowCheck.Checked := False;',
@@ -275,7 +328,12 @@ Copy-Item $dashboardExe $payloadDir
             'CloseApplicationsFilter={#MyAppExeName}',
             'Source: "{#ReleasePayloadDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs',
             'Source: "{#ReleasePayloadDir}\.nlsi-managed-files"; DestDir: "{app}"; Flags: ignoreversion',
-            "ProductVersion = '1.8.8 Beta'",
+            "ProductVersion = '1.9.4 Beta'",
+            "NLSI Exclusive Logbook 1.9.4 Beta|",
+            "NLSI Exclusive Logbook 1.9.3 Beta|",
+            "NLSI Exclusive Logbook 1.9.1 Beta|",
+            "NLSI Exclusive Logbook 1.9.0 Beta|",
+            "NLSI Exclusive Logbook 1.8.9 Beta|",
             "NLSI Exclusive Logbook 1.8.8 Beta|",
             "NLSI Exclusive Logbook 1.8.7 Beta|",
             "NLSI Exclusive Logbook 1.8.6 Beta|",
@@ -348,25 +406,25 @@ Copy-Item $dashboardExe $payloadDir
             throw "Compiled installer is missing or unexpectedly small: $installer"
         }
         $installerVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($installer)
-        if ($installerVersion.ProductVersion.Trim() -ne '1.8.8.0' -or
-            $installerVersion.FileVersion.Trim() -ne '1.8.8.0' -or
-            $installerVersion.FileDescription.Trim() -notmatch '1\.8\.8 Beta') {
+        if ($installerVersion.ProductVersion.Trim() -ne '1.9.4.0' -or
+            $installerVersion.FileVersion.Trim() -ne '1.9.4.0' -or
+            $installerVersion.FileDescription.Trim() -notmatch '1\.9\.4 Beta') {
             throw "Installer version metadata is incorrect: product=$($installerVersion.ProductVersion), description=$($installerVersion.FileDescription)"
         }
 
-        Copy-Item (Join-Path $root 'docs\RELEASE-NOTES-v1.8.8-beta.md') (Join-Path $releaseDir 'RELEASE-NOTES-v1.8.8-beta.md') -Force
-        Copy-Item (Join-Path $root 'docs\INSTALLATION-v1.8.8-beta.md') (Join-Path $releaseDir 'INSTALLATION-v1.8.8-beta.md') -Force
-        $manifestFiles = @(
-            $installer,
-            (Join-Path $payloadDir 'nlsi_dashboard.exe'),
-            (Join-Path $payloadDir 'plugin\win_x64\nlsi_scs_plugin.dll'),
-            (Join-Path $payloadDir 'plugin\win_x86\nlsi_scs_plugin.dll'),
-            (Join-Path $releaseDir 'RELEASE-NOTES-v1.8.8-beta.md'),
-            (Join-Path $releaseDir 'INSTALLATION-v1.8.8-beta.md')
-        )
+        Copy-Item (Join-Path $root 'docs\RELEASE-NOTES-v1.9.4-beta.md') (Join-Path $releaseDir 'RELEASE-NOTES-v1.9.4-beta.md') -Force
+        Copy-Item (Join-Path $root 'docs\INSTALLATION-v1.9.4-beta.md') (Join-Path $releaseDir 'INSTALLATION-v1.9.4-beta.md') -Force
+        $manifestFiles = @($installer) +
+            @(Get-ChildItem -LiteralPath $payloadDir -Recurse -File |
+                ForEach-Object { $_.FullName }) +
+            @(
+                (Join-Path $releaseDir 'RELEASE-NOTES-v1.9.4-beta.md'),
+                (Join-Path $releaseDir 'INSTALLATION-v1.9.4-beta.md')
+            )
+        $manifestFiles = $manifestFiles | Sort-Object -Unique
         $manifestLines = @(
-            'NLSI Exclusive Logbook 1.8.8 Beta release artifact SHA-256 manifest',
-            'Hashes cover the installer, application, both plugins, and release documents.'
+            'NLSI Exclusive Logbook 1.9.4 Beta release artifact SHA-256 manifest',
+            'Hashes cover the installer, every payload file, and release documents.'
         )
         foreach ($file in $manifestFiles) {
             $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant()

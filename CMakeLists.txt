@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(nlsi_exclusive_logbook VERSION 1.8.8 LANGUAGES CXX)
+project(nlsi_exclusive_logbook VERSION 1.9.4 LANGUAGES CXX)
 
 if(WIN32)
     enable_language(RC)
@@ -16,6 +16,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(BUILD_TESTING "Build validation tests." ON)
 option(BUILD_DASHBOARD "Build the Qt Widgets dashboard application." ON)
+set(NLSI_QT_WEBP_PLUGIN_ROOT "" CACHE PATH "Qt plugin root containing imageformats/qwebp.dll")
 
 include(GNUInstallDirs)
 
@@ -27,7 +28,10 @@ if(NOT DEFINED CMAKE_LIBRARY_OUTPUT_DIRECTORY)
     set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 endif()
 
-set(NLSI_SDK_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/scs_sdk_1_15")
+set(NLSI_SDK_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/scs_sdk_1_16")
+if(NOT EXISTS "${NLSI_SDK_ROOT}/include/scssdk_telemetry.h")
+    message(FATAL_ERROR "SCS Telemetry SDK 1.16 headers were not found in ${NLSI_SDK_ROOT}/include")
+endif()
 
 if(BUILD_DASHBOARD OR BUILD_TESTING)
     find_package(Qt6 QUIET COMPONENTS Core Widgets Network Concurrent)
@@ -54,7 +58,7 @@ add_library(nlsi_ipc STATIC
 target_include_directories(nlsi_ipc
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/src/shared
-        ${CMAKE_CURRENT_SOURCE_DIR}/scs_sdk_1_15/include
+        ${NLSI_SDK_ROOT}/include
 )
 
 target_compile_features(nlsi_ipc PUBLIC cxx_std_17)
@@ -105,14 +109,17 @@ add_library(nlsi_plugin_ipc STATIC
 target_include_directories(nlsi_plugin_ipc
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/src/shared
-        ${CMAKE_CURRENT_SOURCE_DIR}/scs_sdk_1_15/include
+        ${NLSI_SDK_ROOT}/include
 )
 target_compile_features(nlsi_plugin_ipc PUBLIC cxx_std_17)
 
 if(BUILD_DASHBOARD)
     add_executable(nlsi_dashboard WIN32
+        src/GameProcessDetection.cpp
+        src/GameProcessDetection.h
         src/DashboardMainWindow.cpp
         src/DashboardMainWindow.h
+        src/ProfileImageLabel.h
         src/DashboardTypography.h
         src/shared/JobHistory.cpp
         src/shared/JobHistory.h
@@ -140,17 +147,22 @@ add_library(nlsi_scs_plugin SHARED
     src/plugin/nlsi_scs_plugin.def
     src/plugin/version.rc
 )
+set_target_properties(nlsi_scs_plugin PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "nlsi_scs_plugin"
+)
 
 target_include_directories(nlsi_scs_plugin
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/shared
-        ${CMAKE_CURRENT_SOURCE_DIR}/scs_sdk_1_15/include
+        ${NLSI_SDK_ROOT}/include
 )
-
-target_compile_definitions(nlsi_scs_plugin PRIVATE SCSSDK_STATIC)
 
 target_compile_features(nlsi_scs_plugin PRIVATE cxx_std_17)
 target_link_libraries(nlsi_scs_plugin PRIVATE nlsi_plugin_ipc)
+if(MINGW)
+    target_link_options(nlsi_scs_plugin PRIVATE -static)
+endif()
 set_property(TARGET nlsi_plugin_ipc nlsi_scs_plugin PROPERTY
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
@@ -170,7 +182,22 @@ install(FILES
 
 if(BUILD_TESTING)
     enable_testing()
+    add_executable(nlsi_game_process_detection_tests
+        src/GameProcessDetection.cpp
+        src/GameProcessDetection.h
+        tests/game_process_detection_tests.cpp
+    )
+    target_include_directories(nlsi_game_process_detection_tests
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_compile_features(nlsi_game_process_detection_tests PRIVATE cxx_std_17)
+    add_test(NAME nlsi_game_process_detection_tests
+             COMMAND nlsi_game_process_detection_tests)
+
     add_executable(nlsi_telemetry_tests
+        src/GameProcessDetection.cpp
+        src/GameProcessDetection.h
         tests/telemetry_ipc_tests.cpp
         src/shared/JobHistory.cpp
         src/shared/JobHistory.h
@@ -213,10 +240,23 @@ if(BUILD_TESTING)
     target_compile_features(nlsi_preferences_tests PRIVATE cxx_std_17)
     target_link_libraries(nlsi_preferences_tests PRIVATE ${QT_LIBS} nlsi_display_formatting)
     add_test(NAME nlsi_preferences_tests COMMAND nlsi_preferences_tests)
+    add_executable(nlsi_image_decode_tests
+        tests/image_decode_tests.cpp
+    )
+    target_compile_features(nlsi_image_decode_tests PRIVATE cxx_std_17)
+    target_link_libraries(nlsi_image_decode_tests PRIVATE ${QT_LIBS})
+    add_test(NAME nlsi_image_decode_tests COMMAND nlsi_image_decode_tests)
     if(Qt6_FOUND)
         get_filename_component(_qt_bin_dir "${Qt6_DIR}/../../../bin" ABSOLUTE)
+        get_filename_component(_qt_plugin_dir "${Qt6_DIR}/../../../plugins" ABSOLUTE)
     elseif(Qt5_FOUND)
         get_filename_component(_qt_bin_dir "${Qt5_DIR}/../../../bin" ABSOLUTE)
+        get_filename_component(_qt_plugin_dir "${Qt5_DIR}/../../../plugins" ABSOLUTE)
+    endif()
+    if(NLSI_QT_WEBP_PLUGIN_ROOT)
+        set(_nlsi_webp_plugin_root "${NLSI_QT_WEBP_PLUGIN_ROOT}")
+    else()
+        set(_nlsi_webp_plugin_root "${_qt_plugin_dir}")
     endif()
     if(DEFINED _qt_bin_dir)
         set_tests_properties(nlsi_telemetry_tests PROPERTIES
@@ -231,11 +271,17 @@ if(BUILD_TESTING)
         set_tests_properties(nlsi_preferences_tests PROPERTIES
             ENVIRONMENT "PATH=${_qt_bin_dir}"
         )
+        set_tests_properties(nlsi_image_decode_tests PROPERTIES
+            ENVIRONMENT "NLSI_QT_WEBP_PLUGIN_ROOT=${_nlsi_webp_plugin_root};QT_PLUGIN_PATH=${_qt_plugin_dir}"
+        )
     endif()
 
     if(BUILD_DASHBOARD)
         add_executable(nlsi_dashboard_ui_tests
+            src/GameProcessDetection.cpp
+            src/GameProcessDetection.h
             src/DashboardMainWindow.cpp
+            src/ProfileImageLabel.h
             src/shared/JobHistory.cpp
             src/shared/JobHistory.h
             tests/dashboard_ui_tests.cpp

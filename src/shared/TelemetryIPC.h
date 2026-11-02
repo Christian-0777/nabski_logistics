@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
@@ -18,6 +19,7 @@ enum class JobStatus
 {
     Unknown,
     Active,
+    Paused,
     Delivered,
     Cancelled
 };

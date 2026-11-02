@@ -4,10 +4,15 @@
 #include <QApplication>
 #include <QAbstractButton>
 #include <QComboBox>
+#include <QCloseEvent>
 #include <QDialog>
+#include <QDir>
 #include <QEventLoop>
 #include <QFile>
 #include <QGroupBox>
+#include <QImage>
+#include <QJsonObject>
+#include <QColor>
 #include <QLayout>
 #include <QLabel>
 #include <QLoggingCategory>
@@ -26,6 +31,7 @@
 
 #include "DashboardMainWindow.h"
 #include "JobReport.h"
+#include "ProfileImageLabel.h"
 
 namespace {
 
@@ -44,6 +50,41 @@ void captureIntegrationLog(QtMsgType, const QMessageLogContext&, const QString& 
 int main(int argc, char** argv)
 {
     QApplication app(argc, argv);
+    ProfileImageLabel imageHolder(true);
+    imageHolder.resize(72, 72);
+    QImage profileFixture(4, 2, QImage::Format_ARGB32_Premultiplied);
+    profileFixture.fill(Qt::green);
+    profileFixture.setPixelColor(0, 0, Qt::red);
+    profileFixture.setPixelColor(3, 0, Qt::blue);
+    profileFixture.setPixelColor(0, 1, Qt::red);
+    profileFixture.setPixelColor(3, 1, Qt::blue);
+    imageHolder.setImage(QPixmap::fromImage(profileFixture));
+    QImage profileRender(imageHolder.size(), QImage::Format_ARGB32_Premultiplied);
+    profileRender.fill(Qt::transparent);
+    imageHolder.render(&profileRender);
+    if (profileRender.pixelColor(36, 36) != QColor(Qt::green) ||
+        profileRender.pixelColor(0, 0) == QColor(Qt::green))
+    {
+        std::cerr << "A valid profile image was stretched or escaped its circular holder.\n";
+        return 1;
+    }
+    imageHolder.resize(90, 90);
+    profileRender = QImage(imageHolder.size(), QImage::Format_ARGB32_Premultiplied);
+    profileRender.fill(Qt::transparent);
+    imageHolder.render(&profileRender);
+    if (profileRender.pixelColor(45, 45) != QColor(Qt::green) ||
+        profileRender.pixelColor(0, 0) == QColor(Qt::green))
+    {
+        std::cerr << "Resizing the profile image holder distorted or unclipped its image.\n";
+        return 1;
+    }
+    imageHolder.setImage(QPixmap());
+    imageHolder.setText("?");
+    if (imageHolder.text() != "?")
+    {
+        std::cerr << "The profile image fallback placeholder was not retained.\n";
+        return 1;
+    }
     QTemporaryDir dashboardProfileDirectory;
     if (!dashboardProfileDirectory.isValid())
     {
@@ -51,10 +92,150 @@ int main(int argc, char** argv)
         return 1;
     }
     const QString dashboardProfilePath = dashboardProfileDirectory.filePath("profile.nlsi");
-    nlsi::DashboardMainWindow window(nullptr, QString(), dashboardProfilePath);
-    if (window.windowTitle() != "NLSI Exclusive Logbook 1.8.8 Beta")
+    nlsi::DashboardMainWindow window(nullptr, QString(), dashboardProfilePath,
+        [] { return nlsi::GameProcessState::NotRunning; });
+    nlsi::GameProcessDetectionResult simulatedProcessDetection{
+        nlsi::GameProcessState::Ets2Running};
+    nlsi::DashboardMainWindow closeSafetyWindow(nullptr, QString(), QString(),
+        [&simulatedProcessDetection] { return simulatedProcessDetection; });
+    closeSafetyWindow.show();
+    auto verifyBlockedClose = [&](nlsi::GameProcessDetectionResult detection,
+                                  const QString& expectedMessage,
+                                  const char* failure)
     {
-        std::cerr << "The dashboard window title does not report v1.8.8 Beta.\n";
+        simulatedProcessDetection = detection;
+        bool warningMatched = false;
+        QTimer::singleShot(0, [&]()
+        {
+            auto* warning = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+            if (warning)
+            {
+                warningMatched = warning->text() == expectedMessage;
+                warning->accept();
+            }
+        });
+        const bool closed = closeSafetyWindow.close();
+        if (closed || !closeSafetyWindow.isVisible() || !warningMatched)
+        {
+            std::cerr << failure << '\n';
+            return false;
+        }
+        return true;
+    };
+    if (!verifyBlockedClose(nlsi::GameProcessState::Ets2Running,
+            "NLSI Exclusive Logbook cannot be closed while a supported game is running. "
+            "Please close Euro Truck Simulator 2 or American Truck Simulator first.",
+            "Closing while ETS2 runs was not canceled with the expected warning.") ||
+        !verifyBlockedClose(nlsi::GameProcessState::AtsRunning,
+            "NLSI Exclusive Logbook cannot be closed while a supported game is running. "
+            "Please close Euro Truck Simulator 2 or American Truck Simulator first.",
+            "Closing while ATS runs was not canceled with the expected warning."))
+    {
+        return 1;
+    }
+
+    simulatedProcessDetection = nlsi::GameProcessState::Ets2Running;
+    bool altF4WarningMatched = false;
+    QTimer::singleShot(0, [&]()
+    {
+        auto* warning = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+        if (warning)
+        {
+            altF4WarningMatched = warning->text().contains("cannot be closed");
+            warning->accept();
+        }
+    });
+    QCloseEvent altF4CloseEvent;
+    QApplication::sendEvent(&closeSafetyWindow, &altF4CloseEvent);
+    if (altF4CloseEvent.isAccepted() || !closeSafetyWindow.isVisible() || !altF4WarningMatched)
+    {
+        std::cerr << "The Alt+F4 close event was not canceled while ETS2 runs.\n";
+        return 1;
+    }
+
+    if (!verifyBlockedClose(
+            nlsi::GameProcessDetectionResult{nlsi::GameProcessState::DetectionError, 5},
+            "Process enumeration failed with Windows error 5. NLSI Exclusive Logbook cannot "
+            "verify whether a supported game is running, so closure has been blocked for safety.",
+            "Closing after process-detection failure was not blocked safely."))
+    {
+        return 1;
+    }
+    simulatedProcessDetection = nlsi::GameProcessState::NotRunning;
+    if (!closeSafetyWindow.close() || closeSafetyWindow.isVisible())
+    {
+        std::cerr << "Closing after both games are closed was not allowed.\n";
+        return 1;
+    }
+
+    QTemporaryDir trailerJobDirectory;
+    nlsi::DashboardMainWindow trailerWindow(nullptr,
+        QDir(trailerJobDirectory.path()).filePath("jobs"), QString(),
+        [] { return nlsi::GameProcessState::NotRunning; });
+    nlsi::TelemetrySnapshot preJobSnapshot;
+    preJobSnapshot.status = nlsi::ConnectionState::Connected;
+    preJobSnapshot.gameId = "eut2";
+    preJobSnapshot.values["trailer.details"] = {"Trailers", "Owned Flatbed", "", true};
+    preJobSnapshot.values["trailer.license_plate"] = {"Trailer Plate", "OWNED-1", "", true};
+    trailerWindow.applySnapshot(preJobSnapshot);
+    nlsi::TelemetrySnapshot activeTrailerJob = preJobSnapshot;
+    activeTrailerJob.values["job.status"] = {"Status", "ACTIVE", "", true};
+    activeTrailerJob.values["job.current"] = {"Current Job", "true", "", true};
+    activeTrailerJob.values["job.cargo"] = {"Cargo", "Steel", "", true};
+    activeTrailerJob.values["trailer.details"] = {"Trailers", "Assigned Trailer", "", true};
+    activeTrailerJob.values["trailer.license_plate"] = {"Trailer Plate", "JOB-9", "", true};
+    trailerWindow.applySnapshot(activeTrailerJob);
+    auto* activeTrailerValue = trailerWindow.findChild<QLabel*>("trailerValue");
+    auto* activeTrailerPlateValue = trailerWindow.findChild<QLabel*>("trailerPlateValue");
+    if (!activeTrailerValue || activeTrailerValue->text() != "OWNED FLATBED" ||
+        !activeTrailerPlateValue || activeTrailerPlateValue->text() != "OWNED-1")
+    {
+        std::cerr << "The dashboard did not retain the pre-job trailer details.\n";
+        return 1;
+    }
+    activeTrailerJob.values["trailer.details"] = {"Trailers", "Another Active Trailer", "", true};
+    activeTrailerJob.values["trailer.license_plate"] = {"Trailer Plate", "JOB-10", "", true};
+    trailerWindow.applySnapshot(activeTrailerJob);
+    if (activeTrailerValue->text() != "OWNED FLATBED" ||
+        activeTrailerPlateValue->text() != "OWNED-1")
+    {
+        std::cerr << "Active trailer telemetry replaced the dashboard's pre-job trailer details.\n";
+        return 1;
+    }
+    QTemporaryDir noTrailerJobDirectory;
+    nlsi::DashboardMainWindow noTrailerWindow(nullptr,
+        QDir(noTrailerJobDirectory.path()).filePath("jobs"), QString(),
+        [] { return nlsi::GameProcessState::NotRunning; });
+    nlsi::TelemetrySnapshot noTrailerPreJob;
+    noTrailerPreJob.status = nlsi::ConnectionState::Connected;
+    noTrailerPreJob.gameId = "eut2";
+    noTrailerWindow.applySnapshot(noTrailerPreJob);
+    auto activeWithoutPreJobTrailer = noTrailerPreJob;
+    activeWithoutPreJobTrailer.values["job.status"] = {"Status", "ACTIVE", "", true};
+    activeWithoutPreJobTrailer.values["job.cargo"] = {"Cargo", "Steel", "", true};
+    activeWithoutPreJobTrailer.values["trailer.details"] = {"Trailers", "Assigned Trailer", "", true};
+    noTrailerWindow.applySnapshot(activeWithoutPreJobTrailer);
+    auto* noPreJobTrailerValue = noTrailerWindow.findChild<QLabel*>("trailerValue");
+    if (!noPreJobTrailerValue || noPreJobTrailerValue->text() != QString::fromUtf8("—"))
+    {
+        std::cerr << "A job-assigned trailer was displayed when no pre-job trailer existed.\n";
+        return 1;
+    }
+    QJsonObject representativeInactiveAccount;
+    representativeInactiveAccount.insert("status", "active");
+    representativeInactiveAccount.insert("is_inactive", true);
+    representativeInactiveAccount.insert("is_representative", true);
+    if (!nlsi::isAccountInactive(representativeInactiveAccount) ||
+        !nlsi::isAccountRepresentative(representativeInactiveAccount) ||
+        nlsi::accountDesignationLabels(representativeInactiveAccount).size() != 1 ||
+        nlsi::displayAccountRole("DRIVER", representativeInactiveAccount) != "DRIVER • REPRESENTATIVE")
+    {
+        std::cerr << "Representative and inactive account designation handling is incorrect.\n";
+        return 1;
+    }
+    if (window.windowTitle() != "NLSI Exclusive Logbook 1.9.4 Beta")
+    {
+        std::cerr << "The dashboard window title does not report v1.9.4 Beta.\n";
         return 1;
     }
     auto* taskCard = window.findChild<QGroupBox*>("profileTaskCard");
@@ -62,9 +243,13 @@ int main(int argc, char** argv)
     auto* taskStatus = window.findChild<QLabel*>("profileTaskStatus");
     auto* rankCard = window.findChild<QGroupBox*>("profileRankCard");
     auto* rankProgress = window.findChild<QProgressBar*>("profileRankProgress");
+    auto* taskTitle = window.findChild<QLabel*>("profileTaskTitle");
+    auto* rankTitle = window.findChild<QLabel*>("profileRankTitle");
     if (!taskCard || !taskProgress || taskProgress->isEnabled() ||
         taskProgress->format() != "TASK DATA UNAVAILABLE" ||
         taskProgress->minimum() != 0 || taskProgress->maximum() != 100 ||
+        !taskTitle || taskTitle->text() != "MONTHLY TASK" ||
+        !rankTitle || rankTitle->text() != "RANK PROGRESSION" ||
         !taskStatus || !taskStatus->text().contains("Not connected") ||
         !rankCard || !rankProgress || taskProgress == rankProgress ||
         taskCard->parentWidget() != rankCard->parentWidget() ||
@@ -391,14 +576,35 @@ int main(int argc, char** argv)
     }
     profileTab->click();
     auto* profileProgress = window.findChild<QProgressBar*>("profileRankProgress");
-    auto* profileCopyButton = window.findChild<QPushButton*>("profileUsernameCopyButton");
-    auto* profileEmailVisibility = window.findChild<QPushButton*>("profileEmailVisibilityButton");
+    auto* profileAvatar = window.findChild<QLabel*>("profileAvatar");
+    auto* profileBanner = window.findChild<QLabel*>("profileBanner");
+    auto* profileName = window.findChild<QLabel*>("profileHeaderName");
+    auto* profileUsername = window.findChild<QLabel*>("profileHeaderUsername");
+    auto* profileStatusBadge = window.findChild<QLabel*>("profileHeaderStatus");
+    auto* profileRoleBadge = window.findChild<QLabel*>("profileHeaderRole");
     auto* refreshProfile = window.findChild<QPushButton*>("refreshProfileButton");
     if (!refreshProfile)
     {
         std::cerr << "The profile refresh action is missing.\n";
         return 1;
     }
+    app.processEvents();
+    if (!profileAvatar || profileAvatar->size() != QSize(72, 72) ||
+        !profileAvatar->parentWidget()->rect().contains(profileAvatar->geometry()))
+    {
+        std::cerr << "The profile avatar holder is not clipped within its identity layout.\n";
+        return 1;
+    }
+    window.resize(1200, 720);
+    app.processEvents();
+    if (profileAvatar->size() != QSize(72, 72) ||
+        !profileAvatar->parentWidget()->rect().contains(profileAvatar->geometry()))
+    {
+        std::cerr << "Resizing moved or distorted the profile avatar holder.\n";
+        return 1;
+    }
+    window.resize(900, 600);
+    app.processEvents();
     refreshProfile->click();
     if (settingsTabs->currentIndex() != 2 ||
         !window.findChild<QLabel*>("profileStatus") ||
@@ -406,15 +612,17 @@ int main(int argc, char** argv)
         !window.findChild<QLabel*>("headerMode")->text().contains("LOCAL MODE") ||
         apiKeyInput->echoMode() != QLineEdit::Password ||
         !profileProgress || profileProgress->format() != "Not connected" ||
-        !profileCopyButton || profileCopyButton->isEnabled() ||
-        !profileEmailVisibility || profileEmailVisibility->isEnabled())
+        !profileAvatar || !profileBanner ||
+        !profileName || profileName->text() != "Not connected" ||
+        !profileUsername || profileUsername->text() != "Not connected" ||
+        !profileStatusBadge || profileStatusBadge->text() != "Not connected" ||
+        !profileRoleBadge || profileRoleBadge->text() != "Not connected" ||
+        window.findChild<QWidget*>("profileDetailsCard"))
     {
         std::cerr << "Profile tab does not show a safe unauthenticated state.\n";
         return 1;
     }
     for (const char* profileField : {
-             "profileUsernameValue", "profileDisplayNameValue", "profileEmailValue",
-             "profileDriverIdValue", "profileDriverStatusValue", "profileRoleValue",
              "profileRankValue", "profileDistanceValue"})
     {
         const auto* value = window.findChild<QLabel*>(profileField);
@@ -451,6 +659,42 @@ int main(int argc, char** argv)
         std::cerr << "Config tab does not show the configured API link.\n";
         return 1;
     }
+    auto* saveApiConfig = window.findChild<QPushButton*>("saveApiSettingsButton");
+    auto* testApiConnection = window.findChild<QPushButton*>("testApiConnectionButton");
+    auto* removeApiConfiguration =
+        window.findChild<QPushButton*>("removeApiConfigurationButton");
+    auto* apiConfigStatus = window.findChild<QLabel*>("apiConfigStatus");
+    if (!saveApiConfig || !testApiConnection || !removeApiConfiguration || !apiConfigStatus ||
+        saveApiConfig->property("settingsAction").toString() != "primary" ||
+        testApiConnection->property("settingsAction").toString() != "secondary" ||
+        removeApiConfiguration->property("settingsAction").toString() != "danger")
+    {
+        std::cerr << "API configuration actions are missing their consistent visual hierarchy.\n";
+        return 1;
+    }
+    apiUrlInput->setText("https://example.test/nlsi-api");
+    apiKeyInput->setText("AbC123xYz789");
+    saveApiConfig->click();
+    nlsi::ApiSettings savedApiSettings;
+    QString apiSettingsError;
+    nlsi::ProfileStore dashboardProfileStore(dashboardProfilePath);
+    if (!dashboardProfileStore.loadApiSettings(savedApiSettings, &apiSettingsError) ||
+        savedApiSettings.baseUrl != "https://example.test/nlsi-api" ||
+        savedApiSettings.apiKey != "AbC123xYz789" ||
+        !window.statusBar()->currentMessage().contains("API CONFIGURATION SAVED"))
+    {
+        std::cerr << "Save Config did not persist the API URL and key.\n";
+        return 1;
+    }
+    apiUrlInput->clear();
+    apiKeyInput->clear();
+    testApiConnection->click();
+    if (!apiConfigStatus->text().contains("both the API URL and driver API key") ||
+        !window.statusBar()->currentMessage().contains("API URL AND DRIVER KEY ARE REQUIRED"))
+    {
+        std::cerr << "Test Connection did not report missing API credentials.\n";
+        return 1;
+    }
     preferenceTab->click();
     speedPreference->setCurrentIndex(
         speedPreference->findData(static_cast<int>(nlsi::SpeedUnit::MilesPerHour)));
@@ -466,8 +710,6 @@ int main(int argc, char** argv)
         std::cerr << "Saving preferences did not provide success feedback.\n";
         return 1;
     }
-    auto* removeApiConfiguration =
-        window.findChild<QPushButton*>("removeApiConfigurationButton");
     if (!removeApiConfiguration)
     {
         std::cerr << "The local API configuration removal action is missing.\n";
@@ -497,7 +739,6 @@ int main(int argc, char** argv)
     nlsi::ApiSettings removedApiSettings;
     nlsi::UserPreferences preservedPreferences;
     QString removalError;
-    nlsi::ProfileStore dashboardProfileStore(dashboardProfilePath);
     if (!dashboardProfileStore.loadApiSettings(removedApiSettings, &removalError) ||
         !removedApiSettings.baseUrl.isEmpty() || !removedApiSettings.apiKey.isEmpty() ||
         !dashboardProfileStore.load(preservedPreferences, &removalError) ||
@@ -530,14 +771,34 @@ int main(int argc, char** argv)
     }
 
     window.close();
-    nlsi::DashboardMainWindow reloadedWindow(nullptr, QString(), dashboardProfilePath);
+    nlsi::DashboardMainWindow reloadedWindow(nullptr, QString(), dashboardProfilePath,
+        [] { return nlsi::GameProcessState::NotRunning; });
     reloadedWindow.applySnapshot(preferenceSnapshot);
     auto* reloadedFuel = reloadedWindow.findChild<QLabel*>("fuelValue");
     auto* reloadedDistance = reloadedWindow.findChild<QLabel*>("plannedDistanceValue");
-    if (!reloadedFuel || reloadedFuel->text() != "5.29 US GAL / 26.42 US GAL (20.01%)" ||
-        !reloadedDistance || reloadedDistance->text() != "10.00 MI")
+    auto* reloadedSettingsNavigation =
+        reloadedWindow.findChild<QPushButton*>("settingsNavButton");
+    if (reloadedSettingsNavigation)
     {
-        std::cerr << "Dashboard did not load saved preferences on restart.\n";
+        reloadedSettingsNavigation->click();
+    }
+    auto* reloadedSpeed = reloadedWindow.findChild<QComboBox*>("speedPreference");
+    auto* reloadedVolume = reloadedWindow.findChild<QComboBox*>("volumePreference");
+    auto* reloadedCurrency = reloadedWindow.findChild<QComboBox*>("currencyPreference");
+    auto* reloadedDistancePreference =
+        reloadedWindow.findChild<QComboBox*>("distancePreference");
+    if (!reloadedFuel || reloadedFuel->text() != "5.29 US GAL / 26.42 US GAL (20.01%)" ||
+        !reloadedDistance || reloadedDistance->text() != "10.00 MI" ||
+        !reloadedSpeed ||
+        reloadedSpeed->currentData().toInt() != static_cast<int>(nlsi::SpeedUnit::MilesPerHour) ||
+        !reloadedVolume ||
+        reloadedVolume->currentData().toInt() != static_cast<int>(nlsi::VolumeUnit::UsGallons) ||
+        !reloadedCurrency ||
+        reloadedCurrency->currentData().toInt() != static_cast<int>(nlsi::CurrencyUnit::UsDollar) ||
+        !reloadedDistancePreference ||
+        reloadedDistancePreference->currentData().toInt() != static_cast<int>(nlsi::DistanceUnit::Miles))
+    {
+        std::cerr << "Dashboard did not load saved preferences and selections on restart.\n";
         return 1;
     }
     reloadedWindow.close();
@@ -558,7 +819,14 @@ int main(int argc, char** argv)
         return 1;
     }
     nlsi::DashboardMainWindow historyWindow(
-        nullptr, jobDirectory.path(), historyProfileDirectory.filePath("profile.nlsi"));
+        nullptr, jobDirectory.path(), historyProfileDirectory.filePath("profile.nlsi"),
+        [] { return nlsi::GameProcessState::NotRunning; });
+    nlsi::TelemetrySnapshot historyPreJob;
+    historyPreJob.status = nlsi::ConnectionState::Connected;
+    historyPreJob.gameId = "eut2";
+    historyPreJob.values["trailer.details"] = {"Trailers", "Owned Flatbed", "", true};
+    historyPreJob.values["trailer.license_plate"] = {"Trailer Plate", "OWNED-1", "", true};
+    historyWindow.applySnapshot(historyPreJob);
     nlsi::TelemetrySnapshot activeJob;
     activeJob.status = nlsi::ConnectionState::Connected;
     activeJob.gameId = "eut2";
@@ -572,11 +840,15 @@ int main(int argc, char** argv)
     activeJob.values["job.max_speed_kmh"] = {"Maximum Speed", "90", "km/h", true};
     activeJob.values["job.average_speed_kmh"] = {"Average Speed", "60", "km/h", true};
     activeJob.values["job.status"] = {"Status", "ACTIVE", "", true};
+    activeJob.values["job.current"] = {"Current Job", "true", "", true};
+    activeJob.values["game.driving_mode"] = {"Driving Mode", "DRIVING", "", true};
     activeJob.values["job.cargo"] = {"Cargo", "steel", "", true};
     activeJob.values["job.source_company"] = {"Origin Company", "tramer", "", true};
     activeJob.values["job.source_city"] = {"From", "berlin", "", true};
     activeJob.values["job.destination_company"] = {"Destination Company", "nbfc", "", true};
     activeJob.values["job.destination_city"] = {"To", "hamburg", "", true};
+    activeJob.values["trailer.details"] = {"Trailers", "Assigned Job Trailer", "", true};
+    activeJob.values["trailer.license_plate"] = {"Trailer Plate", "JOB-9", "", true};
     historyWindow.applySnapshot(activeJob);
     auto* jobIdValue = historyWindow.findChild<QLabel*>("currentJobValue");
     auto* statusValue = historyWindow.findChild<QLabel*>("statusValue");
@@ -622,14 +894,63 @@ int main(int argc, char** argv)
         return 1;
     }
     activeJob.values["job.status"].value = "PAUSED";
+    activeJob.values["game.driving_mode"].value = "PAUSED";
     historyWindow.applySnapshot(activeJob);
-    if (statusValue->text() != "PAUSED")
+    if (statusValue->text() != "PAUSED" ||
+        jobIdValue->text() != QString::fromUtf8("—"))
     {
-        std::cerr << "The job status did not update when its telemetry value changed.\n";
+        std::cerr << "The paused job status or hidden Current Job field is incorrect.\n";
+        return 1;
+    }
+    nlsi::TelemetrySnapshot pausedGameClosed;
+    pausedGameClosed.status = nlsi::ConnectionState::Disconnected;
+    historyWindow.applySnapshot(pausedGameClosed);
+    nlsi::JobHistory pausedJobRecovery(jobDirectory.path());
+    if (jobIdValue->text() != QString::fromUtf8("—") ||
+        !pausedJobRecovery.activeJob() ||
+        pausedJobRecovery.activeJob()->id != persistentJobId.toStdString() ||
+        pausedJobRecovery.activeJob()->status != nlsi::JobStatus::Paused)
+    {
+        std::cerr << "Closing the game while paused hid Current Job or lost its persisted state.\n";
         return 1;
     }
     activeJob.values["job.status"].value = "ACTIVE";
+    activeJob.values["game.driving_mode"].value = "DRIVING";
     historyWindow.applySnapshot(activeJob);
+    if (jobIdValue->text() != persistentJobId)
+    {
+        std::cerr << "The Current Job field did not return after driving resumed.\n";
+        return 1;
+    }
+
+    auto noCurrentJob = activeJob;
+    noCurrentJob.values["job.current"].value = "false";
+    historyWindow.applySnapshot(noCurrentJob);
+    if (jobIdValue->text() != QString::fromUtf8("—"))
+    {
+        std::cerr << "The Current Job field remained populated when telemetry reported no job.\n";
+        return 1;
+    }
+    noCurrentJob.values["job.current"].value = "true";
+    historyWindow.applySnapshot(noCurrentJob);
+    nlsi::TelemetrySnapshot closedGame;
+    closedGame.status = nlsi::ConnectionState::Disconnected;
+    historyWindow.applySnapshot(closedGame);
+    nlsi::JobHistory recoveredHistory(jobDirectory.path());
+    if (jobIdValue->text() != QString::fromUtf8("—") ||
+        !recoveredHistory.activeJob() ||
+        recoveredHistory.activeJob()->id != persistentJobId.toStdString() ||
+        recoveredHistory.activeJob()->status != nlsi::JobStatus::Active)
+    {
+        std::cerr << "Closing the game hid Current Job or changed the persisted active record.\n";
+        return 1;
+    }
+    historyWindow.applySnapshot(activeJob);
+    if (jobIdValue->text() != persistentJobId)
+    {
+        std::cerr << "The Current Job field did not recover after the game returned to driving mode.\n";
+        return 1;
+    }
     auto* completedNavigation = historyWindow.findChild<QPushButton*>("completedJobsNavButton");
     auto* historyDashboardNavigation = historyWindow.findChild<QPushButton*>("dashboardNavButton");
     auto* historyPageStack = historyWindow.findChild<QStackedWidget*>("mainPages");
@@ -663,6 +984,7 @@ int main(int argc, char** argv)
     completedNavigation->click();
     auto deliveredJob = activeJob;
     deliveredJob.values["job.status"] = {"Status", "DELIVERED", "", true};
+    deliveredJob.values["job.current"] = {"Current Job", "false", "", true};
     deliveredJob.values["job.earned_xp"] = {"XP", "90", "", true};
     historyWindow.applySnapshot(deliveredJob);
     app.processEvents();
@@ -702,6 +1024,7 @@ int main(int argc, char** argv)
     cancelledJob.values["job.cargo"].value = "Lumber";
     historyWindow.applySnapshot(cancelledJob);
     cancelledJob.values["job.status"] = {"Status", "CANCELLED", "", true};
+    cancelledJob.values["job.current"] = {"Current Job", "false", "", true};
     historyWindow.applySnapshot(cancelledJob);
     app.processEvents();
     if (historyWindow.findChildren<QPushButton*>("completedJobCard").size() != 2)
@@ -726,6 +1049,8 @@ int main(int argc, char** argv)
             bool hasDistance = false;
             bool hasFuel = false;
             bool hasSpeed = false;
+            bool hasCapturedTrailer = false;
+            bool hasCapturedTrailerPlate = false;
             bool fieldValuesFormatted = true;
             for (QLabel* label : labels)
             {
@@ -760,6 +1085,14 @@ int main(int argc, char** argv)
                     {
                         hasSpeed = fieldValue && fieldValue->text() == "55.92 MPH";
                     }
+                    else if (label->text() == "TRAILER")
+                    {
+                        hasCapturedTrailer = fieldValue && fieldValue->text() == "OWNED FLATBED";
+                    }
+                    else if (label->text() == "TRAILER PLATE")
+                    {
+                        hasCapturedTrailerPlate = fieldValue && fieldValue->text() == "OWNED-1";
+                    }
                 }
                 if (label->objectName() == "telemetryValue" &&
                     (label->text() != label->text().toUpper() || !label->font().bold()))
@@ -768,13 +1101,32 @@ int main(int argc, char** argv)
                 }
             }
             detailDialogShowedFields = hasFuelCost && fuelCostUnavailable &&
-                hasStatus && hasPdfExport && fieldValuesFormatted;
+                hasStatus && hasPdfExport && fieldValuesFormatted &&
+                hasCapturedTrailer && hasCapturedTrailerPlate;
+            if (!detailDialogShowedFields)
+            {
+                std::cerr << "Completed-job detail values or captured trailer data are incorrect.\n";
+            }
             completedMeasurementsConverted =
                 hasCurrency && hasDistance && hasFuel && hasSpeed;
             dialog->accept();
         }
     });
-    historyWindow.findChildren<QPushButton*>("completedJobCard").front()->click();
+    QPushButton* capturedTrailerCard = nullptr;
+    for (QPushButton* card : historyWindow.findChildren<QPushButton*>("completedJobCard"))
+    {
+        if (card->property("jobId").toString() == "NLSI-0001")
+        {
+            capturedTrailerCard = card;
+            break;
+        }
+    }
+    if (!capturedTrailerCard)
+    {
+        std::cerr << "The completed card for the captured-trailer job is missing.\n";
+        return 1;
+    }
+    capturedTrailerCard->click();
     if (!detailDialogShowedFields)
     {
         std::cerr << "Selecting a completed-job card did not show the full detail layout.\n";
@@ -819,12 +1171,12 @@ int main(int argc, char** argv)
         const QtMessageHandler originalMessageHandler =
             qInstallMessageHandler(captureIntegrationLog);
         nlsi::DashboardMainWindow integrationWindow(
-            nullptr, integrationData.filePath("jobs"), integrationProfilePath);
-        auto* username = integrationWindow.findChild<QLabel*>("profileUsernameValue");
-        auto* displayName = integrationWindow.findChild<QLabel*>("profileDisplayNameValue");
-        auto* driverId = integrationWindow.findChild<QLabel*>("profileDriverIdValue");
-        auto* accountStatus = integrationWindow.findChild<QLabel*>("profileDriverStatusValue");
-        auto* role = integrationWindow.findChild<QLabel*>("profileRoleValue");
+            nullptr, integrationData.filePath("jobs"), integrationProfilePath,
+            [] { return nlsi::GameProcessState::NotRunning; });
+        auto* username = integrationWindow.findChild<QLabel*>("profileHeaderUsername");
+        auto* displayName = integrationWindow.findChild<QLabel*>("profileHeaderName");
+        auto* accountStatus = integrationWindow.findChild<QLabel*>("profileHeaderStatus");
+        auto* role = integrationWindow.findChild<QLabel*>("profileHeaderRole");
         auto* rank = integrationWindow.findChild<QLabel*>("profileRankValue");
         auto* profileStatus = integrationWindow.findChild<QLabel*>("profileStatus");
         auto* integrationTaskProgress =
@@ -857,16 +1209,12 @@ int main(int argc, char** argv)
              rank->text() == "Expert" || rank->text() == "Legend" ||
              rank->text() == "Master" || rank->text() == "Ultimate" ||
              rank->text() == "Mythic");
-        bool driverIdIsValid = false;
-        if (driverId)
-        {
-            const qlonglong parsedDriverId = driverId->text().toLongLong(&driverIdIsValid);
-            driverIdIsValid = driverIdIsValid && parsedDriverId > 0;
-        }
-        if (!username || username->text().isEmpty() || username->text() == "Not connected" ||
+        const QString roleValue = role ? role->text().section(QString::fromUtf8(" • "), 0, 0) : QString();
+        if (!username || !username->text().startsWith('@') ||
+            username->text().size() <= 1 ||
             !displayName || displayName->text().isEmpty() ||
-            !driverIdIsValid || !accountStatus || accountStatus->text() != "active" ||
-            !role || !nlsi::isSupportedAccountRole(role->text()) || !validRank ||
+            !accountStatus || accountStatus->text() != "Active" ||
+            !role || !nlsi::isSupportedAccountRole(roleValue) || !validRank ||
             !profileStatus || !profileStatus->text().contains("Server jobs refreshed") ||
             !integrationTaskProgress || !integrationTaskStatus ||
             !(integrationTaskStatus->text().startsWith("No task record is initialized") ||
@@ -879,11 +1227,10 @@ int main(int argc, char** argv)
             !connectionMode || connectionMode->text() != "ONLINE")
         {
             std::cerr << "Actual API integration failed validation: "
-                      << "username=" << (username && username->text() != "Not connected")
+                      << "username=" << (username && username->text().startsWith('@'))
                       << " display_name=" << (displayName && !displayName->text().isEmpty())
-                      << " driver_id=" << driverIdIsValid
-                      << " account_status=" << (accountStatus && accountStatus->text() == "active")
-                      << " role=" << (role && nlsi::isSupportedAccountRole(role->text()))
+                      << " account_status=" << (accountStatus && accountStatus->text() == "Active")
+                      << " role=" << nlsi::isSupportedAccountRole(roleValue)
                       << " rank=" << validRank
                       << " job_refresh=" << (profileStatus &&
                           profileStatus->text().contains("Server jobs refreshed"))

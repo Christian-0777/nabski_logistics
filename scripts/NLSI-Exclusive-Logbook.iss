@@ -1,8 +1,8 @@
 ; NLSI Exclusive Logbook installer
-; Product version: 1.8.8 Beta
+; Product version: 1.9.4 Beta
 
 #define MyAppName "NLSI Exclusive Logbook"
-#define MyAppVersion "1.8.8 Beta"
+#define MyAppVersion "1.9.4 Beta"
 #define MyAppPublisher "NABSKI Logistics Solutions Inc."
 #define MyAppExeName "nlsi_dashboard.exe"
 #define PluginFileName "nlsi_scs_plugin.dll"
@@ -15,15 +15,15 @@ AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={code:GetDefaultInstallDir}
 DefaultGroupName={#MyAppName}
-OutputDir=..\releases\1.8.8-beta
-OutputBaseFilename=NLSI-Exclusive-Logbook-v1.8.8-beta-Setup
+OutputDir=..\releases\1.9.4-beta
+OutputBaseFilename=NLSI-Exclusive-Logbook-v1.9.4-beta-Setup
 SetupIconFile=..\resources\nlsi.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
-VersionInfoVersion=1.8.8.0
+VersionInfoVersion=1.9.4.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} Setup - {#MyAppVersion}
 VersionInfoProductName={#MyAppName}
-VersionInfoProductVersion=1.8.8.0
+VersionInfoProductVersion=1.9.4.0
 ArchitecturesAllowed=x64os
 ArchitecturesInstallIn64BitMode=x64os
 PrivilegesRequired=admin
@@ -60,7 +60,7 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: no
 const
   AppUninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{B58E42DA-BC15-4FD0-9DCC-44E4E14D374D}_is1';
   ProductName = 'NLSI Exclusive Logbook';
-  ProductVersion = '1.8.8 Beta';
+  ProductVersion = '1.9.4 Beta';
   ETS2FolderName = 'Euro Truck Simulator 2';
   ATSFolderName = 'American Truck Simulator';
   PluginDllName = 'nlsi_scs_plugin.dll';
@@ -224,6 +224,11 @@ end;
 function IsRecognizedNLSIMarker(const Marker: String): Boolean;
 begin
   Result :=
+    (Marker = 'NLSI Exclusive Logbook 1.9.4 Beta') or
+    (Marker = 'NLSI Exclusive Logbook 1.9.3 Beta') or
+    (Marker = 'NLSI Exclusive Logbook 1.9.1 Beta') or
+    (Marker = 'NLSI Exclusive Logbook 1.9.0 Beta') or
+    (Marker = 'NLSI Exclusive Logbook 1.8.9 Beta') or
     (Marker = 'NLSI Exclusive Logbook 1.8.8 Beta') or
     (Marker = 'NLSI Exclusive Logbook 1.8.7 Beta') or
     (Marker = 'NLSI Exclusive Logbook 1.8.6 Beta') or
@@ -248,6 +253,11 @@ begin
     (Marker = 'NLSI Exclusive Logbook 1.6.7 Beta') or
     (Marker = 'NLSI Exclusive Logbook 1.6.6 Beta') or
     (Marker = 'NLSI Exclusive Logbook 1.6.5 Beta') or
+    (Pos('NLSI Exclusive Logbook 1.9.4 Beta|', Marker) = 1) or
+    (Pos('NLSI Exclusive Logbook 1.9.3 Beta|', Marker) = 1) or
+    (Pos('NLSI Exclusive Logbook 1.9.1 Beta|', Marker) = 1) or
+    (Pos('NLSI Exclusive Logbook 1.9.0 Beta|', Marker) = 1) or
+    (Pos('NLSI Exclusive Logbook 1.8.9 Beta|', Marker) = 1) or
     (Pos('NLSI Exclusive Logbook 1.8.8 Beta|', Marker) = 1) or
     (Pos('NLSI Exclusive Logbook 1.8.7 Beta|', Marker) = 1) or
     (Pos('NLSI Exclusive Logbook 1.8.6 Beta|', Marker) = 1) or

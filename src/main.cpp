@@ -3,15 +3,33 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QIcon>
+#include <QMessageBox>
 
 #include "DashboardMainWindow.h"
+#include "GameProcessDetection.h"
 
 int main(int argc, char** argv)
 {
     QApplication app(argc, argv);
     app.setApplicationName("NLSI Exclusive Logbook");
     app.setApplicationDisplayName("NLSI Exclusive Logbook");
-    app.setApplicationVersion("1.8.8 Beta");
+    app.setApplicationVersion("1.9.4 Beta");
+
+    const nlsi::GameProcessDetectionResult detection = nlsi::detectGameProcesses();
+    if (!nlsi::gameProcessStateAllowsStartup(detection.state))
+    {
+        const QString message = detection.state == nlsi::GameProcessState::DetectionError
+            ? detection.windowsErrorCode != 0
+                ? QString("Process enumeration failed with Windows error %1. "
+                          "Startup has been blocked because the game state cannot be verified.")
+                      .arg(detection.windowsErrorCode)
+                : "Windows process enumeration is unavailable. Startup has been blocked because "
+                  "the game state cannot be verified."
+            : "NLSI Exclusive Logbook cannot be opened while a supported game is running. "
+              "Please close Euro Truck Simulator 2 or American Truck Simulator first.";
+        QMessageBox::warning(nullptr, "Application cannot be opened", message);
+        return 1;
+    }
 
     QString isolatedDataDirectory;
     const QString smokeArgumentPrefix = "--isolated-smoke-data-dir=";

@@ -42,7 +42,8 @@ public:
     QString errorString() const;
     QString directory() const;
     QString allocateJobId();
-    bool processSnapshot(const TelemetrySnapshot& snapshot, const QDateTime& now);
+    bool processSnapshot(const TelemetrySnapshot& snapshot, const QDateTime& now,
+                         const TelemetrySnapshot* preJobSnapshot = nullptr);
     std::vector<JobRecord> completedJobs(QString* error = nullptr) const;
     std::optional<JobSyncState> syncState(const std::string& localJobId,
                                           QString* error = nullptr) const;

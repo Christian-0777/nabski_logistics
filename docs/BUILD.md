@@ -5,17 +5,19 @@
 - Windows 10 or 11
 - CMake 3.16+ for the project; CMake 3.24+ for the release helper's `--fresh` builds
 - Qt 6.12.0 or later with the `Widgets` and `Network` modules installed
+- Qt Image Formats 6.12.0 source availability for building the matching x64
+  WebP image-format plugin
 - Microsoft Visual Studio 2022 Build Tools with the MSVC x64 C++ workload and Windows SDK
 - Ninja
-- The SCS telemetry SDK headers in `scs_sdk_1_15/`
+- The SCS telemetry SDK 1.16 headers in `scs_sdk_1_16/include/`
 
 The verified build environment for this project used:
 
 - Visual Studio Build Tools 2022, MSVC 19.44.35229, Windows SDK 10.0.26100.0
 - CMake 4.4.4
-- Ninja 1.12.1 (bundled with Visual Studio)
+- Ninja 1.13.2
 - Qt 6.12.0 MSVC 2022 x64, including Widgets and Network
-- Inno Setup 7 (for the versioned installer build)
+- Inno Setup 6 (for the versioned installer build)
 
 ## Configure and build
 
@@ -43,18 +45,19 @@ scripts\clean-build.bat
 ## Release installer
 
 The versioned Windows release pipeline performs a fresh x64 MSVC Release build,
-runs the telemetry tests, separately builds the x86 SCS plugin, validates both
-plugin architectures and exports, stages the dashboard and both plugins,
-deploys Qt and app-local MSVC runtime dependencies, and compiles the Inno Setup
-installer. The release helper records SHA-256 hashes for the installer,
-dashboard, both plugin DLLs, and release documents:
+runs the telemetry tests, builds the Qt 6.12.0 x64 WebP image plugin from the
+matching Qt Image Formats source, separately builds the x86 SCS plugin,
+validates both plugin architectures and exports, stages the dashboard and both
+plugins, deploys Qt and app-local MSVC runtime dependencies, and compiles the
+Inno Setup installer. The release helper records SHA-256 hashes for the
+installer, every staged payload file, and the release documents:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1
 ```
 
-The NLSI Exclusive Logbook v1.8.8 Beta installer is written to
-`releases\1.8.8-beta\NLSI-Exclusive-Logbook-v1.8.8-beta-Setup.exe` and
+The NLSI Exclusive Logbook v1.9.4 Beta installer is written to
+`releases\1.9.4-beta\NLSI-Exclusive-Logbook-v1.9.4-beta-Setup.exe` and
 defaults to `C:\Program Files\Nabski Logistics Solutions Inc`. It uses the
 stable Inno Setup AppId for updates, reuses a valid previous install location,
 closes the dashboard through Windows Restart Manager, and leaves files not
@@ -66,10 +69,11 @@ that exact payload directory to ISCC. The installer source has no implicit
 payload fallback, so compiling it without an explicitly verified staging
 directory fails instead of packaging old build output.
 
-The dashboard and Qt runtime are installed at the destination root. The x64
-and x86 plugins are included at `plugin\win_x64\nlsi_scs_plugin.dll` and
-`plugin\win_x86\nlsi_scs_plugin.dll`. The installer automatically deploys ETS2 and ATS plugins when an installed
-executable is found in the default Steam
+The dashboard and Qt runtime are installed at the destination root. The WebP
+plugin is deployed under `imageformats\qwebp.dll`. The x64 and x86 telemetry
+plugins are included at `plugin\win_x64\nlsi_scs_plugin.dll` and
+`plugin\win_x86\nlsi_scs_plugin.dll`. The installer automatically deploys ETS2
+and ATS plugins when an installed executable is found in the default Steam
 library or a Steam library recorded in `libraryfolders.vdf`. It copies each
 architecture only to an existing, matching game architecture directory.
 Existing unmarked or hash-changed DLLs are not overwritten. Marked plugins are
@@ -84,8 +88,11 @@ The installer places the release notes and installation guide in its `docs`
 subdirectory. The same documents are also kept beside the installer, and their
 SHA-256 values are written to `manifest.sha256`. The final installer, staged
 payload, release documents, and SHA-256 manifest are kept under
-`releases\1.8.8-beta`.
-The plugin communicates with the dashboard over the local Windows named pipe `\\.\pipe\nlsi_scs_telemetry`. The dashboard listens through Qt LocalServer. Completed job history, the active recovery record, and the monotonic ID sequence are stored locally in the user's application-data folder.
+`releases\1.9.4-beta`. The plugin communicates with the
+dashboard over the local Windows named pipe `\\.\pipe\nlsi_scs_telemetry`. The
+dashboard listens through Qt LocalServer. Completed job history, the active
+recovery record, and the monotonic ID sequence are stored locally in the
+user's application-data folder.
 
 ## Targets
 
@@ -93,6 +100,9 @@ The plugin communicates with the dashboard over the local Windows named pipe `\\
 - `nlsi_scs_plugin` — Windows DLL plugin built against the SCS SDK headers
 - `nlsi_telemetry_tests` — IPC parsing/escaping, unavailable values, malformed
   frames, process-state classification, and telemetry connection states
+- `nlsi_game_process_detection_tests` — case-insensitive exact process-name
+  detection, independent ETS2/ATS state, enumeration errors, and repeated
+  Windows snapshots without handle leaks
 - `nlsi_job_history_tests` — ID allocation, active-job restart recovery,
   terminal transitions, atomic records, duplicate events, sequence expansion,
   malformed-record isolation, and authoritative server reconciliation
@@ -101,6 +111,8 @@ The plugin communicates with the dashboard over the local Windows named pipe `\\
   suppression, and pending retry state
 - `nlsi_preferences_tests` — exact conversions, encrypted preference
   persistence, corrupt-profile handling, and preservation of unrelated data
+- `nlsi_image_decode_tests` — packaged Qt WebP decoding and existing JPEG/PNG
+  image-format support
 - `nlsi_dashboard_ui_tests` — dashboard settings and measurement presentation,
   completed-job navigation/cards/details, PDF generation, and vertical scrolling
   (runs with Qt's offscreen platform)

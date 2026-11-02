@@ -190,7 +190,8 @@ QString JobHistory::allocateJobId()
     return QString::fromStdString(formatJobId(nextSequence));
 }
 
-bool JobHistory::processSnapshot(const TelemetrySnapshot& snapshot, const QDateTime& now)
+bool JobHistory::processSnapshot(const TelemetrySnapshot& snapshot, const QDateTime& now,
+                                 const TelemetrySnapshot* preJobSnapshot)
 {
     if (!now.isValid())
     {
@@ -202,7 +203,7 @@ bool JobHistory::processSnapshot(const TelemetrySnapshot& snapshot, const QDateT
         ? jobStatusFromString(statusField->second.value)
         : JobStatus::Unknown;
 
-    if (incoming == JobStatus::Active)
+    if (incoming == JobStatus::Active || incoming == JobStatus::Paused)
     {
         const auto hasJob = [](const TelemetrySnapshot& value)
         {
@@ -257,15 +258,54 @@ bool JobHistory::processSnapshot(const TelemetrySnapshot& snapshot, const QDateT
             }
             active_ = JobRecord{};
             active_->id = id.toStdString();
-            active_->status = JobStatus::Active;
+            active_->status = incoming;
             active_->startedAt = now;
         }
 
         const TelemetrySnapshot previousSnapshot = active_->snapshot;
         const std::string stableId = active_->id;
         const QDateTime startedAt = active_->startedAt;
-        for (const auto& field : snapshot.values)
+        TelemetrySnapshot jobSnapshot = snapshot;
+        if (isNewJob)
         {
+            for (auto it = jobSnapshot.values.begin(); it != jobSnapshot.values.end();)
+            {
+                if (it->first.compare(0, 8, "trailer.") == 0)
+                {
+                    it = jobSnapshot.values.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+            if (preJobSnapshot)
+            {
+                for (const auto& field : preJobSnapshot->values)
+                {
+                    if (field.first.compare(0, 8, "trailer.") == 0)
+                    {
+                        jobSnapshot.values[field.first] = field.second;
+                    }
+                }
+            }
+            if (jobSnapshot.values.find("trailer.details") == jobSnapshot.values.end())
+            {
+                jobSnapshot.values["trailer.details"] = {"Trailers", "", "", false};
+            }
+            if (jobSnapshot.values.find("trailer.license_plate") == jobSnapshot.values.end())
+            {
+                jobSnapshot.values["trailer.license_plate"] = {"Trailer Plate", "", "", false};
+            }
+        }
+        for (const auto& field : jobSnapshot.values)
+        {
+            if (field.first.compare(0, 8, "trailer.") == 0 &&
+                (!isNewJob ||
+                 active_->snapshot.values.find(field.first) != active_->snapshot.values.end()))
+            {
+                continue;
+            }
             if (field.second.available && !trimString(field.second.value).empty())
             {
                 active_->snapshot.values[field.first] = field.second;
@@ -275,13 +315,13 @@ bool JobHistory::processSnapshot(const TelemetrySnapshot& snapshot, const QDateT
                 active_->snapshot.values[field.first] = field.second;
             }
         }
-        active_->snapshot.status = snapshot.status;
-        if (!snapshot.gameId.empty()) active_->snapshot.gameId = snapshot.gameId;
-        if (!snapshot.gameName.empty()) active_->snapshot.gameName = snapshot.gameName;
-        if (!snapshot.gameApiVersion.empty()) active_->snapshot.gameApiVersion = snapshot.gameApiVersion;
+        active_->snapshot.status = jobSnapshot.status;
+        if (!jobSnapshot.gameId.empty()) active_->snapshot.gameId = jobSnapshot.gameId;
+        if (!jobSnapshot.gameName.empty()) active_->snapshot.gameName = jobSnapshot.gameName;
+        if (!jobSnapshot.gameApiVersion.empty()) active_->snapshot.gameApiVersion = jobSnapshot.gameApiVersion;
         active_->id = stableId;
         active_->startedAt = startedAt;
-        active_->status = JobStatus::Active;
+        active_->status = incoming;
         active_->completedAt = QDateTime();
         const auto idField = active_->snapshot.values.find("job.id");
         if (idField == active_->snapshot.values.end() || !idField->second.available ||
@@ -304,6 +344,10 @@ bool JobHistory::processSnapshot(const TelemetrySnapshot& snapshot, const QDateT
         {
             for (const auto& field : snapshot.values)
             {
+                if (field.first.compare(0, 8, "trailer.") == 0)
+                {
+                    continue;
+                }
                 if (field.second.available && !trimString(field.second.value).empty())
                 {
                     active_->snapshot.values[field.first] = field.second;
@@ -377,6 +421,10 @@ bool JobHistory::reconcileServerRecord(const JobRecord& serverRecord, QString* e
     {
         for (const auto& field : remote.snapshot.values)
         {
+            if (field.first.compare(0, 8, "trailer.") == 0)
+            {
+                continue;
+            }
             const auto existing = local.snapshot.values.find(field.first);
             if (existing == local.snapshot.values.end() ||
                 !existing->second.available ||
@@ -857,7 +905,7 @@ bool JobHistory::loadActive(QString& error)
     {
         return false;
     }
-    if (record.status != JobStatus::Active)
+    if (record.status != JobStatus::Active && record.status != JobStatus::Paused)
     {
         error = "The saved active NLSI job has a terminal status; it was not loaded as active.";
         return false;

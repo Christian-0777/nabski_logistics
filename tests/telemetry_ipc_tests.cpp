@@ -76,6 +76,16 @@ int main()
                "ATS process detected") && ok;
     ok = check(nlsi::gameProcessStateFromFlags(true, true) == nlsi::GameProcessState::BothRunning,
                "both game processes are explicit") && ok;
+    ok = check(!nlsi::gameProcessStateAllowsStartup(nlsi::GameProcessState::Ets2Running) &&
+               !nlsi::gameProcessStateAllowsStartup(nlsi::GameProcessState::AtsRunning) &&
+               nlsi::gameProcessStateAllowsStartup(nlsi::GameProcessState::NotRunning) &&
+               !nlsi::gameProcessStateAllowsStartup(nlsi::GameProcessState::DetectionError),
+               "startup allows only a verified state with neither game running") && ok;
+    ok = check(nlsi::gameProcessStateBlocksOperation(nlsi::GameProcessState::Ets2Running) &&
+               nlsi::gameProcessStateBlocksOperation(nlsi::GameProcessState::AtsRunning) &&
+               nlsi::gameProcessStateBlocksOperation(nlsi::GameProcessState::DetectionError) &&
+               !nlsi::gameProcessStateBlocksOperation(nlsi::GameProcessState::NotRunning),
+               "exit checks block for either game and for process-detection failures") && ok;
     ok = check(nlsi::connectionStateFromString("Disconnected") == nlsi::ConnectionState::Disconnected &&
                nlsi::connectionStateFromString("Connecting") == nlsi::ConnectionState::Connecting &&
                nlsi::connectionStateFromString("Connected") == nlsi::ConnectionState::Connected &&
@@ -141,8 +151,10 @@ int main()
     ok = check(nlsi::formatCurrencyEuro(5780.0) == "€5,780.00",
                "euro currency formatting includes the euro symbol and two decimals") && ok;
     ok = check(nlsi::jobStatusToString(nlsi::JobStatus::Active) == "ACTIVE" &&
+               nlsi::jobStatusToString(nlsi::JobStatus::Paused) == "PAUSED" &&
                nlsi::jobStatusToString(nlsi::JobStatus::Delivered) == "DELIVERED" &&
                nlsi::jobStatusToString(nlsi::JobStatus::Cancelled) == "CANCELLED" &&
+               nlsi::jobStatusFromString("paused") == nlsi::JobStatus::Paused &&
                nlsi::jobStatusFromString("completed") == nlsi::JobStatus::Delivered &&
                nlsi::jobStatusFromString("cancelled") == nlsi::JobStatus::Cancelled,
                "job status values are normalized across the telemetry pipeline") && ok;

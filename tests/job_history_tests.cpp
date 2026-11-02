@@ -25,6 +25,7 @@ nlsi::TelemetrySnapshot activeSnapshot()
     snapshot.gameId = "eut2";
     snapshot.gameName = "Euro Truck Simulator 2";
     snapshot.values["job.status"] = {"Status", "ACTIVE", "", true};
+    snapshot.values["job.current"] = {"Current Job", "true", "", true};
     snapshot.values["job.cargo"] = {"Cargo", "Steel", "", true};
     snapshot.values["job.source_city"] = {"From", "Berlin", "", true};
     snapshot.values["job.destination_city"] = {"To", "Paris", "", true};
@@ -36,6 +37,7 @@ nlsi::TelemetrySnapshot terminalSnapshot(const char* status)
 {
     auto snapshot = activeSnapshot();
     snapshot.values["job.status"] = {"Status", status, "", true};
+    snapshot.values["job.current"] = {"Current Job", "false", "", true};
     snapshot.values["job.earned_xp"] = {"XP", "50", "", true};
     snapshot.values["job.driven_distance_km"] = {"Driven Distance", "780.5", "km", true};
     return snapshot;
@@ -74,12 +76,32 @@ int main()
         ok = check(!history.processSnapshot(partial, start.addSecs(2)) &&
                    history.activeJob() && history.activeJob()->id == "NLSI-0001",
                    "a transiently missing status does not finalize or replace an active job") && ok;
+        auto paused = activeSnapshot();
+        paused.values["job.status"] = {"Status", "PAUSED", "", true};
+        ok = check(history.processSnapshot(paused, start.addSecs(3)) &&
+                   history.activeJob() &&
+                   history.activeJob()->status == nlsi::JobStatus::Paused &&
+                   history.activeJob()->id == "NLSI-0001",
+                   "pausing persists the existing job as non-terminal without allocating a new ID") && ok;
+        nlsi::JobHistory pausedRecovery(directory);
+        ok = check(pausedRecovery.activeJob() &&
+                   pausedRecovery.activeJob()->status == nlsi::JobStatus::Paused &&
+                   pausedRecovery.activeJob()->id == "NLSI-0001",
+                   "paused lifecycle state survives a local-record reload") && ok;
+        auto resumed = activeSnapshot();
+        ok = check(history.processSnapshot(resumed, start.addSecs(4)) &&
+                   history.activeJob() &&
+                   history.activeJob()->status == nlsi::JobStatus::Active &&
+                   history.activeJob()->id == "NLSI-0001",
+                   "resuming returns the same active job to ACTIVE") && ok;
     }
 
     {
         nlsi::JobHistory history(directory);
         ok = check(history.activeJob() && history.activeJob()->id == "NLSI-0001",
                    "active job ID survives an application restart") && ok;
+        ok = check(history.activeJob()->status == nlsi::JobStatus::Active,
+                   "resumed job lifecycle state survives an application restart") && ok;
         auto delivered = terminalSnapshot("DELIVERED");
         ok = check(history.processSnapshot(delivered, finish), "confirmed delivery finalizes the job") && ok;
         ok = check(!history.activeJob(), "finalized job is no longer marked active") && ok;
@@ -103,6 +125,83 @@ int main()
         records = history.completedJobs();
         ok = check(records.size() == 2 && records.front().status == nlsi::JobStatus::Cancelled,
                    "completed records are sorted newest first and cancelled jobs remain visible") && ok;
+    }
+
+    {
+        QTemporaryDir trailerDirectory;
+        const QString historyDirectory = QDir(trailerDirectory.path()).filePath("jobs");
+        nlsi::JobHistory history(historyDirectory);
+        auto preJob = activeSnapshot();
+        preJob.values["trailer.details"] = {"Trailers", "Owned Flatbed", "", true};
+        preJob.values["trailer.license_plate"] = {"Trailer Plate", "OWNED-1", "", true};
+        auto assignedTrailerJob = activeSnapshot();
+        assignedTrailerJob.values["trailer.details"] = {"Trailers", "Job Box Trailer", "", true};
+        assignedTrailerJob.values["trailer.license_plate"] = {"Trailer Plate", "JOB-9", "", true};
+
+        ok = check(history.processSnapshot(assignedTrailerJob, start, &preJob) &&
+                   history.activeJob() &&
+                   history.activeJob()->snapshot.values.at("trailer.details").value == "Owned Flatbed" &&
+                   history.activeJob()->snapshot.values.at("trailer.license_plate").value == "OWNED-1",
+                   "new job captures the trailer present before the job-assigned trailer") && ok;
+
+        auto changedTrailerJob = assignedTrailerJob;
+        changedTrailerJob.values["trailer.details"] =
+            {"Trailers", "Different Active Trailer", "", true};
+        changedTrailerJob.values["trailer.license_plate"] =
+            {"Trailer Plate", "JOB-10", "", true};
+        ok = check(history.processSnapshot(changedTrailerJob, start.addSecs(1)) &&
+                   history.activeJob()->snapshot.values.at("trailer.details").value == "Owned Flatbed" &&
+                   history.activeJob()->snapshot.values.at("trailer.license_plate").value == "OWNED-1",
+                   "later active trailer telemetry cannot replace pre-job trailer details") && ok;
+
+        auto delivered = terminalSnapshot("DELIVERED");
+        delivered.values["trailer.details"] =
+            {"Trailers", "Delivery Trailer", "", true};
+        delivered.values["trailer.license_plate"] =
+            {"Trailer Plate", "JOB-END", "", true};
+        ok = check(history.processSnapshot(delivered, finish), "captured-trailer job completes") && ok;
+        const auto completed = history.completedJobs();
+        ok = check(completed.size() == 1 &&
+                   completed.front().snapshot.values.at("trailer.details").value == "Owned Flatbed" &&
+                   completed.front().snapshot.values.at("trailer.license_plate").value == "OWNED-1",
+                   "completed .nlsi record retains the pre-job trailer for details and report exports") && ok;
+    }
+
+    {
+        QTemporaryDir trailerDirectory;
+        nlsi::JobHistory history(QDir(trailerDirectory.path()).filePath("jobs"));
+        nlsi::TelemetrySnapshot noPreJobTrailer;
+        auto active = activeSnapshot();
+        active.values["trailer.details"] = {"Trailers", "Job Trailer", "", true};
+        active.values["trailer.license_plate"] = {"Trailer Plate", "JOB-1", "", true};
+        ok = check(history.processSnapshot(active, start, &noPreJobTrailer) &&
+                   history.activeJob() &&
+                   !history.activeJob()->snapshot.values.at("trailer.details").available &&
+                   !history.activeJob()->snapshot.values.at("trailer.license_plate").available,
+                   "a job without a pre-existing trailer stores unavailable trailer fields") && ok;
+        active.values["trailer.details"] = {"Trailers", "Assigned Later", "", true};
+        active.values["trailer.license_plate"] = {"Trailer Plate", "JOB-2", "", true};
+        history.processSnapshot(active, start.addSecs(1));
+        ok = check(history.activeJob() &&
+                   !history.activeJob()->snapshot.values.at("trailer.details").available &&
+                   !history.activeJob()->snapshot.values.at("trailer.license_plate").available,
+                   "later job trailer telemetry cannot populate a missing pre-job trailer") && ok;
+        nlsi::JobRecord serverRecord;
+        serverRecord.localJobId = history.activeJob()->id;
+        serverRecord.status = nlsi::JobStatus::Active;
+        serverRecord.snapshot.values["trailer.details"] =
+            {"Trailers", "Server Job Trailer", "", true};
+        serverRecord.snapshot.values["trailer.license_plate"] =
+            {"Trailer Plate", "SERVER-1", "", true};
+        ok = check(history.reconcileServerRecord(serverRecord) &&
+                   !history.activeJob()->snapshot.values.at("trailer.details").available &&
+                   !history.activeJob()->snapshot.values.at("trailer.license_plate").available,
+                   "API synchronization cannot fill an absent pre-job trailer from server job telemetry") && ok;
+        nlsi::JobHistory reloaded(history.directory());
+        ok = check(reloaded.activeJob() &&
+                   !reloaded.activeJob()->snapshot.values.at("trailer.details").available &&
+                   !reloaded.activeJob()->snapshot.values.at("trailer.license_plate").available,
+                   "the no-trailer pre-job state survives active-record persistence") && ok;
     }
 
     {

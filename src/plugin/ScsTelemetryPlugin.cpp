@@ -48,6 +48,7 @@ double g_jobSpeedIntegral = 0.0;
 double g_jobSpeedSeconds = 0.0;
 std::chrono::steady_clock::time_point g_lastSpeedSample;
 bool g_jobInProgress = false;
+bool g_gameDriving = false;
 
 std::string formatFloat(const scs_float_t value)
 {
@@ -94,12 +95,41 @@ void publishJobStatus(const std::string& status)
         std::lock_guard<std::mutex> lock(g_snapshotMutex);
         g_snapshot.status = nlsi::ConnectionState::Connected;
         g_snapshot.values["job.status"] = {"Status", status, "", true};
+        const bool currentJob =
+            status == nlsi::jobStatusToString(nlsi::JobStatus::Active) ||
+            status == nlsi::jobStatusToString(nlsi::JobStatus::Paused);
+        g_snapshot.values["job.current"] = {
+            "Current Job", currentJob ? "true" : "false", "", true
+        };
         ++g_snapshotRevision;
         if (status == nlsi::jobStatusToString(nlsi::JobStatus::Delivered) ||
             status == nlsi::jobStatusToString(nlsi::JobStatus::Cancelled))
         {
             g_pendingJobFinalSnapshots.push_back(g_snapshot);
         }
+    }
+    g_snapshotChanged.notify_one();
+}
+
+void publishDrivingMode(bool driving)
+{
+    g_gameDriving = driving;
+    {
+        std::lock_guard<std::mutex> lock(g_snapshotMutex);
+        g_snapshot.status = nlsi::ConnectionState::Connected;
+        g_snapshot.values["game.driving_mode"] = {
+            "Driving Mode", driving ? "DRIVING" : "PAUSED", "", true
+        };
+        if (g_jobInProgress)
+        {
+            const std::string status = nlsi::jobStatusToString(
+                driving ? nlsi::JobStatus::Active : nlsi::JobStatus::Paused);
+            g_snapshot.values["job.status"] = {"Status", status, "", true};
+            g_snapshot.values["job.current"] = {
+                "Current Job", "true", "", true
+            };
+        }
+        ++g_snapshotRevision;
     }
     g_snapshotChanged.notify_one();
 }
@@ -395,6 +425,16 @@ SCSAPI_VOID onTelemetryEvent(
     const scs_context_t context)
 {
     (void)context;
+    if (event == SCS_TELEMETRY_EVENT_paused)
+    {
+        publishDrivingMode(false);
+        return;
+    }
+    if (event == SCS_TELEMETRY_EVENT_started)
+    {
+        publishDrivingMode(true);
+        return;
+    }
     if (!eventInfo)
     {
         return;
@@ -471,7 +511,8 @@ SCSAPI_VOID onTelemetryEvent(
     if (id == SCS_TELEMETRY_CONFIG_job)
     {
         g_jobInProgress = true;
-        publishJobStatus(nlsi::jobStatusToString(nlsi::JobStatus::Active));
+        publishJobStatus(nlsi::jobStatusToString(
+            g_gameDriving ? nlsi::JobStatus::Active : nlsi::JobStatus::Paused));
         g_jobFuelConsumed = 0.0;
         g_jobRefueled = 0.0;
         g_jobMaxSpeedKmh = 0.0;
@@ -623,6 +664,12 @@ SCSAPI_RESULT scs_telemetry_init(
         g_snapshot.gameApiVersion =
             std::to_string(SCS_GET_MAJOR_VERSION(init->common.game_version)) + "." +
             std::to_string(SCS_GET_MINOR_VERSION(init->common.game_version));
+        g_snapshot.values["game.driving_mode"] = {
+            "Driving Mode", "UNKNOWN", "", true
+        };
+        g_snapshot.values["job.current"] = {
+            "Current Job", "false", "", true
+        };
         g_snapshotRevision = 1;
     }
     {
@@ -636,6 +683,8 @@ SCSAPI_RESULT scs_telemetry_init(
     g_jobMaxSpeedKmh = 0.0;
     g_jobSpeedIntegral = 0.0;
     g_jobSpeedSeconds = 0.0;
+    g_jobInProgress = false;
+    g_gameDriving = false;
     g_lastSpeedSample = std::chrono::steady_clock::time_point();
     g_stopWorker.store(false);
     g_ipcWorker = std::thread(ipcWorker);
@@ -653,6 +702,18 @@ SCSAPI_RESULT scs_telemetry_init(
         if (gameplayResult != SCS_RESULT_ok)
         {
             logRegistrationFailure("gameplay event", gameplayResult);
+        }
+        const scs_result_t pausedResult = init->register_for_event(
+            SCS_TELEMETRY_EVENT_paused, onTelemetryEvent, nullptr);
+        if (pausedResult != SCS_RESULT_ok)
+        {
+            logRegistrationFailure("paused event", pausedResult);
+        }
+        const scs_result_t startedResult = init->register_for_event(
+            SCS_TELEMETRY_EVENT_started, onTelemetryEvent, nullptr);
+        if (startedResult != SCS_RESULT_ok)
+        {
+            logRegistrationFailure("started event", startedResult);
         }
     }
 
@@ -682,6 +743,8 @@ SCSAPI_RESULT scs_telemetry_init(
 
 SCSAPI_VOID scs_telemetry_shutdown(void)
 {
+    g_jobInProgress = false;
+    g_gameDriving = false;
     g_stopWorker.store(true);
     g_snapshotChanged.notify_one();
     if (g_ipcWorker.joinable())

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <functional>
 
 #include <QHash>
 #include <QMainWindow>
@@ -15,6 +16,8 @@
 #include "UserPreferences.h"
 
 class QLabel;
+class ProfileImageLabel;
+class QCloseEvent;
 class QGroupBox;
 class QComboBox;
 class QLocalServer;
@@ -34,10 +37,14 @@ class DashboardMainWindow : public QMainWindow
 public:
     explicit DashboardMainWindow(QWidget* parent = nullptr,
                                  const QString& jobHistoryDirectory = QString(),
-                                 const QString& profileFilePath = QString());
+                                 const QString& profileFilePath = QString(),
+                                 std::function<GameProcessDetectionResult()> processDetector = {});
     ~DashboardMainWindow() override;
 
     void applySnapshot(const TelemetrySnapshot& snapshot);
+
+protected:
+    void closeEvent(QCloseEvent* event) override;
 
 private:
     enum class ApiConnectionState
@@ -64,6 +71,8 @@ private:
                                    ApiConnectionState state = ApiConnectionState::LocalMode,
                                    bool transportReachable = false);
     void setProfileUnavailable(const QString& message);
+    void requestProfileImage(const QString& mediaUrl, ProfileImageLabel* target,
+                             const QString& fallbackText);
     void setProfileTaskUnavailable(const QString& explanation,
                                    const QString& progressFormat = "TASK DATA UNAVAILABLE");
     void requestAccountMonthlyTask(qint64 accountId);
@@ -114,15 +123,10 @@ private:
     QPushButton* saveApiSettingsButton_ = nullptr;
     QPushButton* testApiConnectionButton_ = nullptr;
     QPushButton* removeApiConfigurationButton_ = nullptr;
-    QLabel* profileUsernameValue_ = nullptr;
-    QLabel* profileDisplayNameValue_ = nullptr;
-    QLabel* profileEmailValue_ = nullptr;
-    QLabel* profileDriverIdValue_ = nullptr;
-    QLabel* profileDriverStatusValue_ = nullptr;
-    QLabel* profileRoleValue_ = nullptr;
     QLabel* profileRankValue_ = nullptr;
     QLabel* profileDistanceValue_ = nullptr;
-    QLabel* profileAvatar_ = nullptr;
+    ProfileImageLabel* profileAvatar_ = nullptr;
+    ProfileImageLabel* profileBanner_ = nullptr;
     QLabel* profileHeaderName_ = nullptr;
     QLabel* profileHeaderUsername_ = nullptr;
     QLabel* profileHeaderStatus_ = nullptr;
@@ -134,10 +138,6 @@ private:
     QLabel* profileTaskHistoryTitle_ = nullptr;
     QLabel* profileStatus_ = nullptr;
     QPushButton* refreshProfileButton_ = nullptr;
-    QPushButton* profileUsernameCopyButton_ = nullptr;
-    QPushButton* profileEmailCopyButton_ = nullptr;
-    QPushButton* profileEmailVisibilityButton_ = nullptr;
-    QPushButton* profileDriverIdCopyButton_ = nullptr;
     QProgressBar* profileTaskProgress_ = nullptr;
     QProgressBar* profileRankProgress_ = nullptr;
     QLabel* connectionModeLabel_ = nullptr;
@@ -169,8 +169,6 @@ private:
     bool apiOnline_ = false;
     bool apiTransportReachable_ = false;
     bool profileDataAvailable_ = false;
-    bool profileEmailVisible_ = false;
-    QString profileEmail_;
     QString authenticatedRole_;
     QString authenticatedRank_;
     bool syncRequestInFlight_ = false;
@@ -189,6 +187,7 @@ private:
     std::size_t syncUploadOffset_ = 0;
     bool syncUploadHadFailure_ = false;
     bool ipcError_ = false;
+    std::function<GameProcessDetectionResult()> processDetector_;
 
     QLabel* processLabel_ = nullptr;
     QLabel* connectionLabel_ = nullptr;

@@ -4,6 +4,7 @@
 #include "JobReport.h"
 #include "MeasurementFormatting.h"
 #include "JobSyncProtocol.h"
+#include "ProfileImageLabel.h"
 
 #include <algorithm>
 #include <cmath>
@@ -11,12 +12,15 @@
 
 #include <QCoreApplication>
 #include <QApplication>
+#include <QDebug>
+#include <QBuffer>
 #include <QDate>
 #include <QDateTime>
 #include <QDialog>
 #include <QDir>
 #include <QComboBox>
 #include <QClipboard>
+#include <QCloseEvent>
 #include <QFileInfo>
 #include <QFileDialog>
 #include <QFutureWatcher>
@@ -26,6 +30,7 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QImage>
+#include <QImageReader>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -39,6 +44,8 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QPixmap>
+#include <QPainter>
+#include <QPainterPath>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QMessageBox>
@@ -55,11 +62,6 @@
 #include <QUrl>
 #include <QUrlQuery>
 #include <QtConcurrent/QtConcurrentRun>
-
-#ifdef Q_OS_WIN
-#include <Windows.h>
-#include <TlHelp32.h>
-#endif
 
 namespace nlsi {
 namespace {
@@ -98,20 +100,6 @@ double nextRankThreshold(const QString& rank)
     if (rank == "Master") return 500000.0;
     if (rank == "Ultimate") return 1000000.0;
     return 0.0;
-}
-
-QString maskedEmail(const QString& email)
-{
-    const int separator = email.indexOf('@');
-    if (separator <= 0)
-    {
-        return email;
-    }
-    const QString localPart = email.left(separator);
-    const QString visiblePrefix = localPart.left(2);
-    const int maskLength = (std::max)(3,
-        static_cast<int>(localPart.size()) - static_cast<int>(visiblePrefix.size()));
-    return visiblePrefix + QString(maskLength, '*') + email.mid(separator);
 }
 
 QString canonicalValueText(const QString& text)
@@ -776,52 +764,6 @@ bool remoteJobFromJson(const QJsonObject& object, JobRecord& record)
 
 } // namespace
 
-GameProcessState detectGameProcesses()
-{
-#ifdef Q_OS_WIN
-    const HANDLE processSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (processSnapshot == INVALID_HANDLE_VALUE)
-    {
-        return GameProcessState::DetectionError;
-    }
-
-    bool ets2Running = false;
-    bool atsRunning = false;
-    PROCESSENTRY32W entry{};
-    entry.dwSize = sizeof(entry);
-    if (!Process32FirstW(processSnapshot, &entry))
-    {
-        const DWORD error = GetLastError();
-        CloseHandle(processSnapshot);
-        return error == ERROR_NO_MORE_FILES
-            ? GameProcessState::NotRunning
-            : GameProcessState::DetectionError;
-    }
-
-    do
-    {
-        if (_wcsicmp(entry.szExeFile, L"eurotrucks2.exe") == 0)
-        {
-            ets2Running = true;
-        }
-        else if (_wcsicmp(entry.szExeFile, L"amtrucks.exe") == 0)
-        {
-            atsRunning = true;
-        }
-    } while (Process32NextW(processSnapshot, &entry));
-
-    const DWORD enumerationError = GetLastError();
-    CloseHandle(processSnapshot);
-    if (enumerationError != ERROR_NO_MORE_FILES)
-    {
-        return GameProcessState::DetectionError;
-    }
-    return gameProcessStateFromFlags(ets2Running, atsRunning);
-#else
-    return GameProcessState::DetectionError;
-#endif
-}
-
 bool snapshotMatchesProcess(const TelemetrySnapshot& snapshot, GameProcessState state)
 {
     if (state == GameProcessState::Ets2Running)
@@ -840,16 +782,22 @@ bool snapshotMatchesProcess(const TelemetrySnapshot& snapshot, GameProcessState 
 namespace nlsi {
 
 DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHistoryDirectory,
-                                         const QString& profileFilePath)
+                                         const QString& profileFilePath,
+                                         std::function<GameProcessDetectionResult()> processDetector)
     : QMainWindow(parent),
       jobHistory_(jobHistoryDirectory),
-      profileStore_(profileFilePath)
+      profileStore_(profileFilePath),
+      processDetector_(std::move(processDetector))
 {
+    if (!processDetector_)
+    {
+        processDetector_ = detectGameProcesses;
+    }
     QString profileError;
     const bool profileLoaded = profileStore_.load(preferences_, &profileError);
     const bool apiSettingsLoaded = profileStore_.loadApiSettings(apiSettings_, &apiSettingsLoadError_);
     networkManager_ = new QNetworkAccessManager(this);
-    setWindowTitle("NLSI Exclusive Logbook 1.8.8 Beta");
+    setWindowTitle("NLSI Exclusive Logbook 1.9.4 Beta");
     const QString iconPath = QFileInfo(QDir::currentPath(), "resources/nlsi.ico").exists()
         ? QDir::currentPath() + "/resources/nlsi.ico"
         : QCoreApplication::applicationDirPath() + "/resources/nlsi.ico";
@@ -874,8 +822,26 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
         "QPushButton[sidebarNavButton=\"true\"][active=\"true\"]:pressed { color: #FFFFFF; background: #A92E67; border-color: #922357; }"
         "QPushButton[settingsTab=\"true\"] { font: 700 12px 'Segoe UI'; color: #665B62; background: #FFF8FB; border: 1px solid #FFD1E6; border-radius: 5px; padding: 8px 16px; }"
         "QPushButton[settingsTab=\"true\"][active=\"true\"] { color: #FFFFFF; background: #D94F8C; border-color: #C83E7B; }"
-        "QPushButton#savePreferencesButton { font: 700 12px 'Segoe UI'; color: #FFFFFF; background: #D94F8C; border: 1px solid #C83E7B; border-radius: 5px; padding: 9px 16px; }"
-        "QPushButton#savePreferencesButton:hover { background: #C83E7B; }"
+        "QWidget#settingsPage QLineEdit { font: 400 13px 'Segoe UI'; color: #28232A; background: #FFFFFF; border: 1px solid #E8CAD8; border-radius: 7px; min-height: 40px; padding: 0 12px; selection-background-color: #D94F8C; }"
+        "QWidget#settingsPage QLineEdit:hover { border-color: #D982AA; }"
+        "QWidget#settingsPage QLineEdit:focus { border: 2px solid #D94F8C; padding: 0 11px; }"
+        "QWidget#settingsPage QComboBox { font: 400 13px 'Segoe UI'; color: #28232A; background: #FFFFFF; border: 1px solid #E8CAD8; border-radius: 7px; min-height: 40px; padding: 0 36px 0 12px; }"
+        "QWidget#settingsPage QComboBox:hover { border-color: #D982AA; }"
+        "QWidget#settingsPage QComboBox:focus { border: 2px solid #D94F8C; padding-left: 11px; }"
+        "QWidget#settingsPage QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 32px; border-left: 1px solid #F2DCE6; border-top-right-radius: 6px; border-bottom-right-radius: 6px; }"
+        "QWidget#settingsPage QComboBox::drop-down:hover { background: #FFF1F7; }"
+        "QWidget#settingsPage QComboBox QAbstractItemView { font: 400 13px 'Segoe UI'; color: #28232A; background: #FFFFFF; border: 1px solid #E8CAD8; selection-color: #7F244E; selection-background-color: #FDEBF3; outline: 0; padding: 4px; }"
+        "QLabel#settingsFieldLabel { font: 700 11px 'Segoe UI'; color: #A15E7D; letter-spacing: 0.5px; }"
+        "QPushButton[settingsAction=\"primary\"], QPushButton[settingsAction=\"secondary\"], QPushButton[settingsAction=\"danger\"] { font: 700 12px 'Segoe UI'; min-width: 142px; min-height: 40px; padding: 0 14px; border-radius: 7px; }"
+        "QPushButton[settingsAction=\"primary\"] { color: #FFFFFF; background: #D94F8C; border: 1px solid #C83E7B; }"
+        "QPushButton[settingsAction=\"primary\"]:hover { background: #C83E7B; border-color: #B8306D; }"
+        "QPushButton[settingsAction=\"primary\"]:pressed { background: #A92E67; }"
+        "QPushButton[settingsAction=\"secondary\"] { color: #A42F67; background: #FFF8FB; border: 1px solid #E9B8CD; }"
+        "QPushButton[settingsAction=\"secondary\"]:hover { color: #7F244E; background: #FDEBF3; border-color: #D982AA; }"
+        "QPushButton[settingsAction=\"danger\"] { color: #A13D43; background: #FFFFFF; border: 1px solid #E6B9BB; }"
+        "QPushButton[settingsAction=\"danger\"]:hover { color: #852F35; background: #FFF1F1; border-color: #CE858A; }"
+        "QPushButton[settingsAction=\"primary\"]:focus, QPushButton[settingsAction=\"secondary\"]:focus, QPushButton[settingsAction=\"danger\"]:focus { outline: none; border-width: 2px; }"
+        "QPushButton[settingsAction=\"primary\"]:disabled, QPushButton[settingsAction=\"secondary\"]:disabled, QPushButton[settingsAction=\"danger\"]:disabled { color: #AFA4AA; background: #F5EEF1; border-color: #E7DDE2; }"
         "QPushButton#completedJobCard { text-align: left; background: #FFFFFF; border: 1px solid #FFD1E6; border-radius: 5px; padding: 10px; }"
         "QPushButton#completedJobCard QLabel { font-weight: 700; }"
         "QPushButton#completedJobCard:hover { background: #FFF7FA; }"
@@ -883,23 +849,21 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
         "QLabel#headerMode { font: 700 10px 'Segoe UI'; color: #A15E7D; }"
         "QLabel#headerMeta { font: 700 10px 'Segoe UI'; color: #665B62; }"
         "QLabel#processState, QLabel#connectionState { font: 700 10px 'Segoe UI'; color: #665B62; }"
-        "QLabel#profileAvatar { font: 700 24px 'Segoe UI'; color: #FFFFFF; background: #D94F8C; border-radius: 12px; }"
+        "QLabel#profileAvatar { font: 700 24px 'Segoe UI'; color: #FFFFFF; background: #D94F8C; border: 2px solid #FFFFFF; }"
+        "QLabel#profileBanner { background: #FDEBF3; border: 1px solid #F3D0E0; border-radius: 7px; }"
         "QLabel#profileHeaderName { font: 700 17px 'Segoe UI'; color: #28232A; }"
         "QLabel#profileHeaderUsername { font: 400 12px 'Segoe UI'; color: #665B62; }"
         "QLabel#profileHeaderStatus, QLabel#profileHeaderRole { font: 700 10px 'Segoe UI'; border-radius: 9px; padding: 3px 9px; }"
         "QLabel#profileHeaderStatus { color: #1C8059; background: #E4F6EC; }"
         "QLabel#profileHeaderRole { color: #B03C73; background: #FDEBF3; }"
-        "QLabel#profileDetailLabel { font: 400 12px 'Segoe UI'; color: #665B62; }"
-        "QLabel#profileDetailValue { font: 400 12px 'Segoe UI'; color: #28232A; }"
-        "QPushButton[profileAction=\"true\"] { font: 400 11px 'Segoe UI'; color: #C83E7B; background: #FFFFFF; border: 1px solid #FFD1E6; border-radius: 5px; padding: 3px 10px; }"
-        "QPushButton[profileAction=\"true\"]:hover { background: #FFF7FA; }"
-        "QPushButton[profileAction=\"true\"]:disabled { color: #AFA4AA; border-color: #F0E7EB; }"
-        "QProgressBar#profileTaskProgress, QProgressBar#profileRankProgress { height: 11px; color: #665B62; background: #FCEAF2; border: 1px solid #FFD1E6; border-radius: 5px; text-align: center; font: 400 9px 'Segoe UI'; }"
-        "QProgressBar#profileTaskProgress::chunk, QProgressBar#profileRankProgress::chunk { background: #D94F8C; border-radius: 4px; }"
+        "QGroupBox#profileTaskCard, QGroupBox#profileRankCard { border-radius: 9px; margin-top: 0; padding-top: 0; }"
+        "QLabel#profileTaskTitle, QLabel#profileRankTitle { font: 700 15px 'Segoe UI'; color: #A42F67; }"
+        "QProgressBar#profileTaskProgress, QProgressBar#profileRankProgress { height: 15px; color: #665B62; background: #FCEAF2; border: 1px solid #F0CBDC; border-radius: 7px; text-align: center; font: 700 10px 'Segoe UI'; }"
+        "QProgressBar#profileTaskProgress::chunk, QProgressBar#profileRankProgress::chunk { background: #D94F8C; border-radius: 6px; }"
         "QProgressBar#profileTaskProgress:disabled { color: #A15E7D; background: #FFF7FA; }"
-        "QLabel#profileRankMeta { font: 400 10px 'Segoe UI'; color: #A15E7D; }"
-        "QLabel#profileTaskStatus, QLabel#profileTaskHistoryTitle, QLabel#profileTaskHistory { font: 400 10px 'Segoe UI'; color: #665B62; }"
-        "QLabel#profileTaskHistoryTitle { font-weight: 700; color: #A15E7D; padding-top: 2px; }"
+        "QLabel#profileRankMeta { font: 400 11px 'Segoe UI'; color: #765866; }"
+        "QLabel#profileTaskStatus, QLabel#profileTaskHistoryTitle, QLabel#profileTaskHistory { font: 400 11px 'Segoe UI'; color: #554A50; }"
+        "QLabel#profileTaskHistoryTitle { font-weight: 700; color: #A42F67; padding-top: 5px; }"
         "QLabel#profileSyncTitle { font: 700 12px 'Segoe UI'; color: #8A5A00; }"
         "QLabel#profileStatus { font: 400 10px 'Segoe UI'; color: #8A5A00; }"
         "QLabel#telemetryLabel { font: 700 %4px 'Segoe UI'; color: #A15E7D; letter-spacing: 0.35px; padding-top: 2px; }"
@@ -949,7 +913,7 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
     statusBar->setStyleSheet(
         "QStatusBar { background: #FFF7FA; border-top: 1px solid #FFD1E6; color: #665B62; font: 700 10px 'Segoe UI'; padding: 0 8px; }"
     );
-    statusBar->showMessage("LOCAL TELEMETRY • VERSION 1.8.8 BETA");
+    statusBar->showMessage("LOCAL TELEMETRY • VERSION 1.9.4 BETA");
     setStatusBar(statusBar);
     if (!jobHistory_.errorString().isEmpty())
     {
@@ -1050,6 +1014,29 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
 
 DashboardMainWindow::~DashboardMainWindow() = default;
 
+void DashboardMainWindow::closeEvent(QCloseEvent* event)
+{
+    const GameProcessDetectionResult detection = processDetector_();
+    const GameProcessState state = detection.state;
+    if (gameProcessStateBlocksOperation(state))
+    {
+        const QString message = state == GameProcessState::DetectionError
+            ? detection.windowsErrorCode != 0
+                ? QString("Process enumeration failed with Windows error %1. "
+                          "NLSI Exclusive Logbook cannot verify whether a supported game is running, "
+                          "so closure has been blocked for safety.")
+                      .arg(detection.windowsErrorCode)
+                : "Windows process enumeration is unavailable. NLSI Exclusive Logbook cannot "
+                  "verify whether a supported game is running, so closure has been blocked for safety."
+            : "NLSI Exclusive Logbook cannot be closed while a supported game is running. "
+              "Please close Euro Truck Simulator 2 or American Truck Simulator first.";
+        QMessageBox::warning(this, "Application cannot be closed", message);
+        event->ignore();
+        return;
+    }
+    event->accept();
+}
+
 void DashboardMainWindow::updateProcessDetection()
 {
     if (processScanInFlight_)
@@ -1057,14 +1044,14 @@ void DashboardMainWindow::updateProcessDetection()
         return;
     }
     processScanInFlight_ = true;
-    auto* watcher = new QFutureWatcher<GameProcessState>(this);
-    connect(watcher, &QFutureWatcher<GameProcessState>::finished, this, [this, watcher]()
+    auto* watcher = new QFutureWatcher<GameProcessDetectionResult>(this);
+    connect(watcher, &QFutureWatcher<GameProcessDetectionResult>::finished, this, [this, watcher]()
     {
         processScanInFlight_ = false;
-        setProcessState(watcher->result());
+        setProcessState(watcher->result().state);
         watcher->deleteLater();
     });
-    watcher->setFuture(QtConcurrent::run(detectGameProcesses));
+    watcher->setFuture(QtConcurrent::run(processDetector_));
 }
 
 void DashboardMainWindow::buildSidebar()
@@ -1138,7 +1125,7 @@ void DashboardMainWindow::buildSidebar()
     footerDivider->setFrameShadow(QFrame::Plain);
     footerDivider->setStyleSheet("QFrame { color: #FFD1E6; background: #FFD1E6; max-height: 1px; }");
     layout->addWidget(footerDivider);
-    auto* version = new QLabel("1.8.8 BETA", sidebar_);
+    auto* version = new QLabel("1.9.4 BETA", sidebar_);
     version->setObjectName("sidebarSubtitle");
     layout->addWidget(version);
 }
@@ -1285,7 +1272,9 @@ void DashboardMainWindow::buildContent()
     vehicleValue_ = addField(configGrid, gameConfigPanel_, "VEHICLE", 0, 0);
     vehiclePlateValue_ = addField(configGrid, gameConfigPanel_, "VEHICLE PLATE", 0, 2);
     trailerValue_ = addField(configGrid, gameConfigPanel_, "TRAILER", 1, 0);
+    trailerValue_->setObjectName("trailerValue");
     trailerPlateValue_ = addField(configGrid, gameConfigPanel_, "TRAILER PLATE", 1, 2);
+    trailerPlateValue_->setObjectName("trailerPlateValue");
     configLayout->addLayout(configGrid);
     sections->addWidget(gameConfigPanel_);
 
@@ -1327,6 +1316,7 @@ void DashboardMainWindow::buildContent()
     pageStack_->addWidget(completedPage);
 
     auto* settingsPage = new QWidget(pageStack_);
+    settingsPage->setObjectName("settingsPage");
     auto* settingsLayout = new QVBoxLayout(settingsPage);
     settingsLayout->setContentsMargins(0, 0, 0, 0);
     settingsLayout->setSpacing(8);
@@ -1357,17 +1347,19 @@ void DashboardMainWindow::buildContent()
     preferencePageLayout->setContentsMargins(0, 0, 0, 0);
     auto* preferencePanel = new QGroupBox("MEASUREMENT PREFERENCES", preferencePage);
     auto* preferenceForm = new QFormLayout(preferencePanel);
-    preferenceForm->setContentsMargins(14, 16, 14, 12);
-    preferenceForm->setHorizontalSpacing(18);
-    preferenceForm->setVerticalSpacing(12);
+    preferenceForm->setContentsMargins(18, 19, 18, 18);
+    preferenceForm->setHorizontalSpacing(22);
+    preferenceForm->setVerticalSpacing(14);
+    preferenceForm->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
 
     auto makePreference = [&](const QString& label, const QString& name)
     {
         auto* combo = new QComboBox(preferencePanel);
         combo->setObjectName(name);
-        combo->setMinimumWidth(220);
+        combo->setMinimumWidth(240);
+        combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         auto* formLabel = new QLabel(label, preferencePanel);
-        formLabel->setObjectName("telemetryLabel");
+        formLabel->setObjectName("settingsFieldLabel");
         preferenceForm->addRow(formLabel, combo);
         return combo;
     };
@@ -1392,6 +1384,7 @@ void DashboardMainWindow::buildContent()
     preferenceActions->addStretch();
     savePreferencesButton_ = new QPushButton("SAVE PREFERENCES", preferencePage);
     savePreferencesButton_->setObjectName("savePreferencesButton");
+    savePreferencesButton_->setProperty("settingsAction", "primary");
     preferenceActions->addWidget(savePreferencesButton_);
     preferencePageLayout->addWidget(preferencePanel);
     preferencePageLayout->addLayout(preferenceActions);
@@ -1403,19 +1396,26 @@ void DashboardMainWindow::buildContent()
     apiConfigLayout->setContentsMargins(0, 0, 0, 0);
     auto* configPanel = new QGroupBox("API CONNECTION", configPage);
     auto* configForm = new QFormLayout(configPanel);
-    configForm->setContentsMargins(14, 16, 14, 12);
-    configForm->setHorizontalSpacing(18);
-    configForm->setVerticalSpacing(12);
+    configForm->setContentsMargins(18, 19, 18, 18);
+    configForm->setHorizontalSpacing(22);
+    configForm->setVerticalSpacing(14);
+    configForm->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
     apiUrlInput_ = new QLineEdit(apiSettings_.baseUrl, configPanel);
     apiUrlInput_->setObjectName("apiUrlInput");
-    apiUrlInput_->setMinimumWidth(320);
+    apiUrlInput_->setMinimumWidth(280);
+    apiUrlInput_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     apiUrlInput_->setPlaceholderText("Enter your HTTPS API URL");
-    configForm->addRow("API LINK", apiUrlInput_);
+    auto* apiUrlLabel = new QLabel("API LINK", configPanel);
+    apiUrlLabel->setObjectName("settingsFieldLabel");
+    configForm->addRow(apiUrlLabel, apiUrlInput_);
     apiKeyInput_ = new QLineEdit(apiSettings_.apiKey, configPanel);
     apiKeyInput_->setObjectName("apiKeyInput");
     apiKeyInput_->setEchoMode(QLineEdit::Password);
     apiKeyInput_->setPlaceholderText("Enter your driver API key");
-    configForm->addRow("API KEY", apiKeyInput_);
+    apiKeyInput_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    auto* apiKeyLabel = new QLabel("API KEY", configPanel);
+    apiKeyLabel->setObjectName("settingsFieldLabel");
+    configForm->addRow(apiKeyLabel, apiKeyInput_);
     apiConfigStatus_ = new QLabel(
         !apiSettingsLoadError_.isEmpty()
             ? "Saved API settings could not be loaded. Check the encrypted profile."
@@ -1426,15 +1426,20 @@ void DashboardMainWindow::buildContent()
     apiConfigStatus_->setObjectName("apiConfigStatus");
     apiConfigStatus_->setWordWrap(true);
     apiConfigStatus_->setStyleSheet("color: #665B62; padding-top: 6px;");
-    configForm->addRow("STATUS", apiConfigStatus_);
+    auto* apiStatusLabel = new QLabel("STATUS", configPanel);
+    apiStatusLabel->setObjectName("settingsFieldLabel");
+    configForm->addRow(apiStatusLabel, apiConfigStatus_);
     auto* configActions = new QHBoxLayout();
     configActions->addStretch();
     saveApiSettingsButton_ = new QPushButton("SAVE CONFIG", configPage);
     saveApiSettingsButton_->setObjectName("saveApiSettingsButton");
+    saveApiSettingsButton_->setProperty("settingsAction", "primary");
     testApiConnectionButton_ = new QPushButton("TEST CONNECTION", configPage);
     testApiConnectionButton_->setObjectName("testApiConnectionButton");
+    testApiConnectionButton_->setProperty("settingsAction", "secondary");
     removeApiConfigurationButton_ = new QPushButton("REMOVE API CONFIGURATION", configPage);
     removeApiConfigurationButton_->setObjectName("removeApiConfigurationButton");
+    removeApiConfigurationButton_->setProperty("settingsAction", "danger");
     configActions->addWidget(saveApiSettingsButton_);
     configActions->addWidget(testApiConnectionButton_);
     configActions->addWidget(removeApiConfigurationButton_);
@@ -1460,28 +1465,40 @@ void DashboardMainWindow::buildContent()
     accountCard->setObjectName("profileHeaderCard");
     accountCard->setStyleSheet(
         "QFrame#profileHeaderCard { background: #FFFFFF; border: 1px solid #FFD1E6; border-radius: 9px; }");
-    auto* accountLayout = new QHBoxLayout(accountCard);
-    accountLayout->setContentsMargins(16, 12, 16, 12);
-    accountLayout->setSpacing(14);
-    profileAvatar_ = new QLabel(profileUnavailable, accountCard);
+    auto* accountLayout = new QVBoxLayout(accountCard);
+    accountLayout->setContentsMargins(10, 10, 10, 12);
+    accountLayout->setSpacing(10);
+    profileBanner_ = new ProfileImageLabel(false, accountCard);
+    profileBanner_->setObjectName("profileBanner");
+    profileBanner_->setMinimumHeight(76);
+    profileBanner_->setMaximumHeight(108);
+    profileBanner_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    profileBanner_->setAlignment(Qt::AlignCenter);
+    accountLayout->addWidget(profileBanner_);
+
+    auto* accountIdentity = new QWidget(accountCard);
+    auto* accountIdentityLayout = new QHBoxLayout(accountIdentity);
+    accountIdentityLayout->setContentsMargins(4, 0, 4, 0);
+    accountIdentityLayout->setSpacing(14);
+    profileAvatar_ = new ProfileImageLabel(true, accountIdentity);
     profileAvatar_->setObjectName("profileAvatar");
-    profileAvatar_->setFixedSize(62, 62);
+    profileAvatar_->setFixedSize(72, 72);
     profileAvatar_->setAlignment(Qt::AlignCenter);
     profileAvatar_->setWordWrap(true);
-    accountLayout->addWidget(profileAvatar_);
+    accountIdentityLayout->addWidget(profileAvatar_);
     auto* accountText = new QVBoxLayout();
     accountText->setContentsMargins(0, 0, 0, 0);
-    accountText->setSpacing(2);
-    profileHeaderName_ = new QLabel(profileUnavailable, accountCard);
+    accountText->setSpacing(4);
+    profileHeaderName_ = new QLabel(profileUnavailable, accountIdentity);
     profileHeaderName_->setObjectName("profileHeaderName");
-    profileHeaderUsername_ = new QLabel(profileUnavailable, accountCard);
+    profileHeaderUsername_ = new QLabel(profileUnavailable, accountIdentity);
     profileHeaderUsername_->setObjectName("profileHeaderUsername");
     auto* accountBadges = new QHBoxLayout();
-    accountBadges->setContentsMargins(0, 2, 0, 0);
+    accountBadges->setContentsMargins(0, 3, 0, 0);
     accountBadges->setSpacing(6);
-    profileHeaderStatus_ = new QLabel(profileUnavailable, accountCard);
+    profileHeaderStatus_ = new QLabel(profileUnavailable, accountIdentity);
     profileHeaderStatus_->setObjectName("profileHeaderStatus");
-    profileHeaderRole_ = new QLabel(profileUnavailable, accountCard);
+    profileHeaderRole_ = new QLabel(profileUnavailable, accountIdentity);
     profileHeaderRole_->setObjectName("profileHeaderRole");
     accountBadges->addWidget(profileHeaderStatus_);
     accountBadges->addWidget(profileHeaderRole_);
@@ -1489,17 +1506,17 @@ void DashboardMainWindow::buildContent()
     accountText->addWidget(profileHeaderName_);
     accountText->addWidget(profileHeaderUsername_);
     accountText->addLayout(accountBadges);
-    accountLayout->addLayout(accountText, 1);
+    accountIdentityLayout->addLayout(accountText, 1);
+    accountLayout->addWidget(accountIdentity);
     profileContentLayout->addWidget(accountCard);
 
     auto* taskCard = new QGroupBox(profileContent);
     taskCard->setObjectName("profileTaskCard");
     auto* taskLayout = new QVBoxLayout(taskCard);
-    taskLayout->setContentsMargins(12, 12, 12, 10);
-    taskLayout->setSpacing(7);
-    auto* taskTitle = new QLabel("TASK:", taskCard);
+    taskLayout->setContentsMargins(16, 15, 16, 14);
+    taskLayout->setSpacing(10);
+    auto* taskTitle = new QLabel("MONTHLY TASK", taskCard);
     taskTitle->setObjectName("profileTaskTitle");
-    taskTitle->setStyleSheet("font: 700 13px 'Segoe UI'; color: #28232A;");
     profileTaskProgress_ = new QProgressBar(taskCard);
     profileTaskProgress_->setObjectName("profileTaskProgress");
     profileTaskProgress_->setRange(0, 100);
@@ -1528,20 +1545,20 @@ void DashboardMainWindow::buildContent()
     auto* rankCard = new QGroupBox(profileContent);
     rankCard->setObjectName("profileRankCard");
     auto* rankLayout = new QVBoxLayout(rankCard);
-    rankLayout->setContentsMargins(12, 12, 12, 10);
-    rankLayout->setSpacing(7);
+    rankLayout->setContentsMargins(16, 15, 16, 14);
+    rankLayout->setSpacing(10);
     auto* rankHeading = new QHBoxLayout();
-    auto* rankTitle = new QLabel("RANK:", rankCard);
-    rankTitle->setObjectName("profileDetailValue");
+    auto* rankTitle = new QLabel("RANK PROGRESSION", rankCard);
+    rankTitle->setObjectName("profileRankTitle");
     profileRankValue_ = new QLabel(profileUnavailable, rankCard);
     profileRankValue_->setObjectName("profileRankValue");
-    profileRankValue_->setStyleSheet("font: 700 13px 'Segoe UI';");
+    profileRankValue_->setStyleSheet("font: 700 14px 'Segoe UI'; color: #28232A;");
     profileDistanceValue_ = new QLabel(profileUnavailable, rankCard);
     profileDistanceValue_->setObjectName("profileDistanceValue");
-    profileDistanceValue_->setStyleSheet("font: 700 18px 'Segoe UI';");
+    profileDistanceValue_->setStyleSheet("font: 700 20px 'Segoe UI'; color: #28232A;");
     auto* distanceBlock = new QVBoxLayout();
     distanceBlock->setContentsMargins(0, 0, 0, 0);
-    distanceBlock->setSpacing(1);
+    distanceBlock->setSpacing(2);
     auto* distanceLabel = new QLabel("Qualifying distance", rankCard);
     distanceLabel->setObjectName("profileRankMeta");
     distanceLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -1570,73 +1587,6 @@ void DashboardMainWindow::buildContent()
     rankMeta->addWidget(profileThresholdValue_);
     rankLayout->addLayout(rankMeta);
     profileContentLayout->addWidget(rankCard);
-
-    auto* detailsCard = new QFrame(profileContent);
-    detailsCard->setObjectName("profileDetailsCard");
-    detailsCard->setStyleSheet(
-        "QFrame#profileDetailsCard { background: #FFFFFF; border: 1px solid #FFD1E6; border-radius: 9px; }");
-    auto* detailsLayout = new QVBoxLayout(detailsCard);
-    detailsLayout->setContentsMargins(16, 7, 16, 7);
-    detailsLayout->setSpacing(0);
-    auto makeProfileRow = [detailsCard, detailsLayout](const QString& labelText,
-                                                       const QString& valueName)
-    {
-        auto* row = new QWidget(detailsCard);
-        auto* rowLayout = new QHBoxLayout(row);
-        rowLayout->setContentsMargins(0, 6, 0, 6);
-        rowLayout->setSpacing(8);
-        auto* label = new QLabel(labelText, row);
-        label->setObjectName("profileDetailLabel");
-        label->setFixedWidth(125);
-        auto* value = new QLabel(profileUnavailable, row);
-        value->setObjectName(valueName);
-        value->setProperty("profileValue", true);
-        value->setStyleSheet("font: 400 12px 'Segoe UI'; color: #28232A;");
-        value->setTextInteractionFlags(Qt::TextSelectableByMouse);
-        value->setWordWrap(true);
-        rowLayout->addWidget(label);
-        rowLayout->addWidget(value, 1);
-        detailsLayout->addWidget(row);
-        return value;
-    };
-    auto makeProfileAction = [](const QString& text, const QString& name, QWidget* parent)
-    {
-        auto* button = new QPushButton(text, parent);
-        button->setObjectName(name);
-        button->setProperty("profileAction", true);
-        button->setFixedHeight(25);
-        return button;
-    };
-    auto addProfileSeparator = [detailsCard, detailsLayout]()
-    {
-        auto* separator = new QFrame(detailsCard);
-        separator->setFrameShape(QFrame::HLine);
-        separator->setStyleSheet("QFrame { color: #FCEAF2; background: #FCEAF2; max-height: 1px; }");
-        detailsLayout->addWidget(separator);
-    };
-    profileUsernameValue_ = makeProfileRow("Username", "profileUsernameValue");
-    auto* usernameRow = profileUsernameValue_->parentWidget();
-    profileUsernameCopyButton_ = makeProfileAction("Copy", "profileUsernameCopyButton", usernameRow);
-    usernameRow->layout()->addWidget(profileUsernameCopyButton_);
-    addProfileSeparator();
-    profileDisplayNameValue_ = makeProfileRow("Display name", "profileDisplayNameValue");
-    addProfileSeparator();
-    profileEmailValue_ = makeProfileRow("Email", "profileEmailValue");
-    auto* emailRow = profileEmailValue_->parentWidget();
-    profileEmailVisibilityButton_ = makeProfileAction("Show", "profileEmailVisibilityButton", emailRow);
-    profileEmailCopyButton_ = makeProfileAction("Copy", "profileEmailCopyButton", emailRow);
-    emailRow->layout()->addWidget(profileEmailVisibilityButton_);
-    emailRow->layout()->addWidget(profileEmailCopyButton_);
-    addProfileSeparator();
-    profileDriverIdValue_ = makeProfileRow("Driver ID", "profileDriverIdValue");
-    auto* driverIdRow = profileDriverIdValue_->parentWidget();
-    profileDriverIdCopyButton_ = makeProfileAction("Copy", "profileDriverIdCopyButton", driverIdRow);
-    driverIdRow->layout()->addWidget(profileDriverIdCopyButton_);
-    addProfileSeparator();
-    profileDriverStatusValue_ = makeProfileRow("Account status", "profileDriverStatusValue");
-    addProfileSeparator();
-    profileRoleValue_ = makeProfileRow("Account role", "profileRoleValue");
-    profileContentLayout->addWidget(detailsCard);
 
     auto* syncCard = new QWidget(profileContent);
     syncCard->setObjectName("profileSyncCard");
@@ -1721,37 +1671,6 @@ void DashboardMainWindow::buildContent()
             this, &DashboardMainWindow::removeApiConfiguration);
     connect(refreshProfileButton_, &QPushButton::clicked,
             this, &DashboardMainWindow::refreshAccountProfile);
-    connect(profileUsernameCopyButton_, &QPushButton::clicked, this, [this]()
-    {
-        if (profileDataAvailable_)
-        {
-            QApplication::clipboard()->setText(profileUsernameValue_->text());
-        }
-    });
-    connect(profileEmailCopyButton_, &QPushButton::clicked, this, [this]()
-    {
-        if (profileDataAvailable_)
-        {
-            QApplication::clipboard()->setText(profileEmail_);
-        }
-    });
-    connect(profileDriverIdCopyButton_, &QPushButton::clicked, this, [this]()
-    {
-        if (profileDataAvailable_)
-        {
-            QApplication::clipboard()->setText(profileDriverIdValue_->text());
-        }
-    });
-    connect(profileEmailVisibilityButton_, &QPushButton::clicked, this, [this]()
-    {
-        if (!profileDataAvailable_)
-        {
-            return;
-        }
-        profileEmailVisible_ = !profileEmailVisible_;
-        profileEmailValue_->setText(profileEmailVisible_ ? profileEmail_ : maskedEmail(profileEmail_));
-        profileEmailVisibilityButton_->setText(profileEmailVisible_ ? "Hide" : "Show");
-    });
     connect(savePreferencesButton_, &QPushButton::clicked,
             this, &DashboardMainWindow::savePreferences);
     rootLayout->addWidget(pageStack_, 1);
@@ -2047,20 +1966,14 @@ void DashboardMainWindow::clearAuthenticatedAccount(const QString& explanation,
 void DashboardMainWindow::setProfileUnavailable(const QString& message)
 {
     profileDataAvailable_ = false;
-    profileEmailVisible_ = false;
-    profileEmail_.clear();
     profileQualifyingDistanceKm_.reset();
+    profileAvatar_->setImage(QPixmap());
     profileAvatar_->setText("?");
+    profileBanner_->setImage(QPixmap());
     profileHeaderName_->setText(profileUnavailable);
     profileHeaderUsername_->setText(profileUnavailable);
     profileHeaderStatus_->setText(profileUnavailable);
     profileHeaderRole_->setText(profileUnavailable);
-    profileUsernameValue_->setText(profileUnavailable);
-    profileDisplayNameValue_->setText(profileUnavailable);
-    profileEmailValue_->setText(profileUnavailable);
-    profileDriverIdValue_->setText(profileUnavailable);
-    profileDriverStatusValue_->setText(profileUnavailable);
-    profileRoleValue_->setText(profileUnavailable);
     profileRankValue_->setText(profileUnavailable);
     profileDistanceValue_->setText(profileUnavailable);
     profileRankProgress_->setValue(0);
@@ -2068,12 +1981,115 @@ void DashboardMainWindow::setProfileUnavailable(const QString& message)
     setProfileTaskUnavailable(message);
     profileRemainingValue_->setText(profileUnavailable);
     profileThresholdValue_->setText("Next rank at " + profileUnavailable);
-    profileUsernameCopyButton_->setEnabled(false);
-    profileEmailCopyButton_->setEnabled(false);
-    profileEmailVisibilityButton_->setEnabled(false);
-    profileEmailVisibilityButton_->setText("Show");
-    profileDriverIdCopyButton_->setEnabled(false);
     profileStatus_->setText(message);
+}
+
+void DashboardMainWindow::requestProfileImage(const QString& mediaUrl,
+                                              ProfileImageLabel* target,
+                                              const QString& fallbackText)
+{
+    target->setImage(QPixmap());
+    target->setText(fallbackText);
+    if (mediaUrl.trimmed().isEmpty())
+    {
+        return;
+    }
+
+    const QUrl profileEndpoint = apiEndpointUrl(apiSettings_.baseUrl, "driver-key.php");
+    const QUrl relativeUrl(mediaUrl, QUrl::StrictMode);
+    if (!profileEndpoint.isValid() || !relativeUrl.isRelative() || relativeUrl.isEmpty())
+    {
+        qWarning() << "The server returned an invalid profile image reference.";
+        return;
+    }
+    const QUrl imageUrl = profileEndpoint.resolved(relativeUrl);
+    const int expectedPort = profileEndpoint.port(
+        profileEndpoint.scheme().compare("https", Qt::CaseInsensitive) == 0 ? 443 : 80);
+    const int imagePort = imageUrl.port(
+        imageUrl.scheme().compare("https", Qt::CaseInsensitive) == 0 ? 443 : 80);
+    if ((imageUrl.scheme() != "https" && imageUrl.scheme() != "http") ||
+        imageUrl.scheme() != profileEndpoint.scheme() ||
+        imageUrl.host().compare(profileEndpoint.host(), Qt::CaseInsensitive) != 0 ||
+        imagePort != expectedPort || !imageUrl.userName().isEmpty() ||
+        !imageUrl.password().isEmpty())
+    {
+        qWarning() << "The server returned a profile image URL outside the API origin.";
+        return;
+    }
+
+    QNetworkRequest request(imageUrl);
+    request.setRawHeader("Authorization", "Bearer " + apiSettings_.apiKey.trimmed().toUtf8());
+    request.setRawHeader("Accept", "image/jpeg, image/png, image/webp");
+    addNgrokWarningBypassHeader(request);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::ManualRedirectPolicy);
+    QNetworkReply* reply = networkManager_->get(request);
+    const quint64 requestGeneration = accountSessionGeneration_;
+    connect(reply, &QNetworkReply::downloadProgress, reply,
+            [reply](qint64 received, qint64)
+    {
+        if (received > 8 * 1024 * 1024)
+        {
+            reply->abort();
+        }
+    });
+    QTimer::singleShot(15000, reply, [reply]()
+    {
+        if (reply->isRunning())
+        {
+            reply->abort();
+        }
+    });
+    connect(reply, &QNetworkReply::finished, this,
+            [this, reply, target, requestGeneration]()
+    {
+        const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QByteArray contentType = reply->header(QNetworkRequest::ContentTypeHeader)
+            .toString().section(';', 0, 0).trimmed().toLatin1().toLower();
+        const QByteArray imageBytes = reply->readAll();
+        reply->deleteLater();
+        if (requestGeneration != accountSessionGeneration_)
+        {
+            return;
+        }
+        if (statusCode != 200 || reply->error() != QNetworkReply::NoError ||
+            imageBytes.isEmpty() || imageBytes.size() > 8 * 1024 * 1024 ||
+            (contentType != "image/jpeg" && contentType != "image/png" &&
+             contentType != "image/webp"))
+        {
+            qWarning() << "The authenticated profile image request failed with HTTP status"
+                       << statusCode;
+            return;
+        }
+
+        QBuffer imageBuffer;
+        imageBuffer.setData(imageBytes);
+        if (!imageBuffer.open(QIODevice::ReadOnly))
+        {
+            qWarning() << "Could not read the downloaded profile image.";
+            return;
+        }
+        QImageReader imageReader(&imageBuffer);
+        imageReader.setDecideFormatFromContent(true);
+        const QSize imageSize = imageReader.size();
+        const qint64 pixelCount = static_cast<qint64>(imageSize.width()) * imageSize.height();
+        if (!imageReader.canRead() || imageSize.width() <= 0 || imageSize.height() <= 0 ||
+            imageSize.width() > 8192 || imageSize.height() > 8192 ||
+            pixelCount > 32000000)
+        {
+            qWarning() << "The server returned an unsupported or oversized profile image.";
+            return;
+        }
+        const QImage image = imageReader.read();
+        if (image.isNull())
+        {
+            qWarning() << "Could not decode the downloaded profile image:"
+                       << imageReader.errorString();
+            return;
+        }
+        target->setImage(QPixmap::fromImage(image));
+        target->setText({});
+    });
 }
 
 void DashboardMainWindow::updateProfileRank(const QString& serverRank,
@@ -2526,6 +2542,11 @@ void DashboardMainWindow::requestAccountProfile(bool connectionTest, bool synchr
         const bool rankValid = qualifyingDistance.isDouble() &&
             std::isfinite(qualifyingDistanceKm) && qualifyingDistanceKm >= 0.0 &&
             driver.value("rank").isString() && isSupportedDriverRank(rank);
+        const QString accountStatus = driver.value("status").toString().trimmed();
+        const bool isInactive = isAccountInactive(driver, accountStatus);
+        const bool isRepresentative = isAccountRepresentative(driver);
+        const bool statusValid = accountStatus.compare("active", Qt::CaseInsensitive) == 0 ||
+            accountStatus.compare("inactive", Qt::CaseInsensitive) == 0;
         const bool authenticated = reply->error() == QNetworkReply::NoError &&
             statusCode == 200 &&
             jsonContentType &&
@@ -2537,7 +2558,7 @@ void DashboardMainWindow::requestAccountProfile(bool connectionTest, bool synchr
             !email.isEmpty() && email.contains('@') &&
             driver.value("display_name").isString() && !displayName.isEmpty() &&
             isSupportedAccountRole(role) &&
-            driver.value("status").toString() == "active" &&
+            statusValid &&
             driver.value("driver_id").isDouble() &&
             std::isfinite(driverIdNumber) && driverIdNumber > 0 &&
             driverIdNumber < static_cast<double>((std::numeric_limits<qint64>::max)()) &&
@@ -2558,28 +2579,23 @@ void DashboardMainWindow::requestAccountProfile(bool connectionTest, bool synchr
             authenticatedRank_ = rank;
             profileDataAvailable_ = true;
             profileQualifyingDistanceKm_ = qualifyingDistanceKm;
-            profileUsernameValue_->setText(username);
-            profileDisplayNameValue_->setText(displayName);
-            profileEmail_ = email;
-            profileEmailVisible_ = false;
-            profileEmailValue_->setText(email.isEmpty() ? unavailable : maskedEmail(email));
-            profileDriverIdValue_->setText(QString::number(accountId));
-            profileDriverStatusValue_->setText("active");
-            profileRoleValue_->setText(role);
-            profileAvatar_->setText(displayName.left(1).toUpper());
+            const QString accountStatusLabel = isInactive ? "Inactive" : "Active";
+            const QString accountRoleText = displayAccountRole(role, driver);
+            requestProfileImage(driver.value("profile_picture_url").toString(),
+                                profileAvatar_, displayName.left(1).toUpper());
+            requestProfileImage(driver.value("profile_banner_url").toString(),
+                                profileBanner_, {});
             profileHeaderName_->setText(displayName);
             profileHeaderUsername_->setText("@" + username);
-            profileHeaderStatus_->setText("Active");
-            profileHeaderRole_->setText(role);
-            profileUsernameCopyButton_->setEnabled(true);
-            profileEmailCopyButton_->setEnabled(!email.isEmpty());
-            profileEmailVisibilityButton_->setEnabled(!email.isEmpty());
-            profileDriverIdCopyButton_->setEnabled(true);
+            profileHeaderStatus_->setText(accountStatusLabel);
+            profileHeaderRole_->setText(accountRoleText);
             updateProfileRank(rank, qualifyingDistanceKm);
             requestAccountMonthlyTask(accountId);
             updateApiConnectionState(ApiConnectionState::Online,
                 "The configured API is reachable and the driver key authenticated successfully.");
-            profileStatus_->setText("Profile confirmed by the server.");
+            profileStatus_->setText(isInactive
+                ? "Inactive profile confirmed by the server. Rank and task data stay server-authoritative."
+                : "Profile confirmed by the server.");
             if (connectionTest)
             {
                 message = "API connection verified and driver key accepted.";
@@ -2590,7 +2606,9 @@ void DashboardMainWindow::requestAccountProfile(bool connectionTest, bool synchr
             else
             {
                 profileStatus_->setText(automaticCheck
-                    ? "Online. Profile and rank are confirmed by the server."
+                    ? (isInactive
+                        ? "Online. Inactive account profile and frozen rank are confirmed by the server."
+                        : "Online. Profile and rank are confirmed by the server.")
                     : "Profile refreshed from the authenticated account.");
             }
             if (synchronizeJobs)
@@ -3637,14 +3655,30 @@ void DashboardMainWindow::applySnapshot(const TelemetrySnapshot& snapshot)
     const bool startsJob = [&]()
     {
         const auto status = snapshot.values.find("job.status");
-        return status != snapshot.values.end() && status->second.available &&
-            jobStatusFromString(status->second.value) == JobStatus::Active;
+        if (status == snapshot.values.end() || !status->second.available)
+        {
+            return false;
+        }
+        const JobStatus jobStatus = jobStatusFromString(status->second.value);
+        return jobStatus == JobStatus::Active || jobStatus == JobStatus::Paused;
     }();
     const auto incomingJobStatus = snapshot.values.find("job.status");
     const bool deliveredEvent = incomingJobStatus != snapshot.values.end() &&
         incomingJobStatus->second.available &&
         jobStatusFromString(incomingJobStatus->second.value) == JobStatus::Delivered;
-    const bool historyUpdated = jobHistory_.processSnapshot(snapshot, QDateTime::currentDateTimeUtc());
+    TelemetrySnapshot preJobSnapshot;
+    const TelemetrySnapshot* preJobSnapshotForHistory = nullptr;
+    if (startsJob)
+    {
+        if (displayedSnapshot_.status == ConnectionState::Connected &&
+            displayedSnapshot_.gameId == snapshot.gameId)
+        {
+            preJobSnapshot = displayedSnapshot_;
+        }
+        preJobSnapshotForHistory = &preJobSnapshot;
+    }
+    const bool historyUpdated = jobHistory_.processSnapshot(
+        snapshot, QDateTime::currentDateTimeUtc(), preJobSnapshotForHistory);
 
     const TelemetrySnapshot* retainedJobSnapshot = nullptr;
     if (jobHistory_.activeJob())
@@ -3680,12 +3714,34 @@ void DashboardMainWindow::applySnapshot(const TelemetrySnapshot& snapshot)
         viewSnapshot.values["job.id"] = {
             "Job ID", jobHistory_.activeJob()->id, "", true
         };
+        for (const auto& field : jobHistory_.activeJob()->snapshot.values)
+        {
+            if (field.first.compare(0, 8, "trailer.") == 0)
+            {
+                viewSnapshot.values[field.first] = field.second;
+            }
+        }
     }
     else if (!startsJob && !remoteActiveJobs_.empty())
     {
         for (const auto& field : remoteActiveJobs_.front().snapshot.values)
         {
             if (field.first.compare(0, 4, "job.") == 0)
+            {
+                viewSnapshot.values[field.first] = field.second;
+            }
+        }
+        viewSnapshot.values["trailer.details"] = {"Trailers", "", "", false};
+        viewSnapshot.values["trailer.license_plate"] = {"Trailer Plate", "", "", false};
+    }
+    if (!jobHistory_.activeJob() && previousActiveJob &&
+        (deliveredEvent || (incomingJobStatus != snapshot.values.end() &&
+         incomingJobStatus->second.available &&
+         jobStatusFromString(incomingJobStatus->second.value) == JobStatus::Cancelled)))
+    {
+        for (const auto& field : previousActiveJob->snapshot.values)
+        {
+            if (field.first.compare(0, 8, "trailer.") == 0)
             {
                 viewSnapshot.values[field.first] = field.second;
             }
@@ -3770,7 +3826,14 @@ void DashboardMainWindow::applySnapshot(const TelemetrySnapshot& snapshot)
         return {QString::fromStdString(field->value), QString::fromStdString(field->unit).trimmed()};
     };
 
-    set(currentJobValue_, fieldText("job.id"));
+    const auto currentJob = snapshot.values.find("job.current");
+    const auto drivingMode = snapshot.values.find("game.driving_mode");
+    const bool showCurrentJob = snapshot.status == ConnectionState::Connected &&
+        currentJob != snapshot.values.end() && currentJob->second.available &&
+        currentJob->second.value == "true" &&
+        drivingMode != snapshot.values.end() && drivingMode->second.available &&
+        drivingMode->second.value == "DRIVING" && jobHistory_.activeJob().has_value();
+    set(currentJobValue_, showCurrentJob ? fieldText("job.id") : unavailable);
     set(statusValue_, fieldText("job.status"));
     set(cargoValue_, fieldText("job.cargo"));
     {

@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLockFile>
@@ -310,6 +311,87 @@ bool isValidPreferences(const UserPreferences& preferences)
 bool isSupportedAccountRole(const QString& role)
 {
     return role == "DRIVER" || role == "MANAGER" || role == "CEO" || role == "ADMIN";
+}
+
+namespace {
+
+bool valueAsBoolean(const QJsonValue& value)
+{
+    if (value.isBool())
+    {
+        return value.toBool();
+    }
+    if (value.isDouble())
+    {
+        return value.toDouble() != 0.0;
+    }
+    if (value.isString())
+    {
+        const QString normalized = value.toString().trimmed().toLower();
+        return normalized == "1" || normalized == "true" || normalized == "yes" ||
+            normalized == "y" || normalized == "on" || normalized == "active" ||
+            normalized == "inactive";
+    }
+    return false;
+}
+
+} // namespace
+
+bool isAccountInactive(const QJsonObject& account, const QString& fallbackStatus)
+{
+    const auto statusValue = account.value("status");
+    const QString status = !fallbackStatus.isEmpty() ? fallbackStatus : statusValue.toString();
+    if (status.compare("inactive", Qt::CaseInsensitive) == 0)
+    {
+        return true;
+    }
+    return valueAsBoolean(account.value("is_inactive"));
+}
+
+bool isAccountRepresentative(const QJsonObject& account)
+{
+    if (valueAsBoolean(account.value("is_representative")))
+    {
+        return true;
+    }
+    if (account.value("designations").isArray())
+    {
+        for (const QJsonValue& entry : account.value("designations").toArray())
+        {
+            const QString text = entry.toString().trimmed().toUpper();
+            if (text == "REPRESENTATIVE")
+            {
+                return true;
+            }
+        }
+    }
+    const QString designation = account.value("designation").toString().trimmed().toUpper();
+    return designation == "REPRESENTATIVE";
+}
+
+QStringList accountDesignationLabels(const QJsonObject& account)
+{
+    QStringList labels;
+    if (isAccountRepresentative(account))
+    {
+        labels.append("REPRESENTATIVE");
+    }
+    return labels;
+}
+
+QString displayAccountRole(const QString& primaryRole, const QJsonObject& account)
+{
+    QString role = primaryRole.trimmed().toUpper();
+    if (role.isEmpty())
+    {
+        role = "DRIVER";
+    }
+    const QStringList designations = accountDesignationLabels(account);
+    if (designations.isEmpty())
+    {
+        return role;
+    }
+    return role + " • " + designations.join(" • ");
 }
 
 bool normalizeApiBaseUrl(const QString& value, QString& normalized, QString* error)

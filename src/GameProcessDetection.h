@@ -1,5 +1,8 @@
 #pragma once
 
+#include <string>
+#include <vector>
+
 namespace nlsi {
 
 enum class GameProcessState
@@ -10,6 +13,40 @@ enum class GameProcessState
     BothRunning,
     DetectionError
 };
+
+struct GameProcessDetectionResult
+{
+    GameProcessState state = GameProcessState::DetectionError;
+    unsigned long windowsErrorCode = 0;
+
+    GameProcessDetectionResult() = default;
+    GameProcessDetectionResult(GameProcessState detectionState,
+                               unsigned long errorCode = 0)
+        : state(detectionState), windowsErrorCode(errorCode)
+    {
+    }
+};
+
+struct ProcessEnumerationResult
+{
+    bool succeeded = false;
+    std::vector<std::wstring> executableNames;
+    unsigned long windowsErrorCode = 0;
+};
+
+GameProcessDetectionResult detectGameProcesses();
+GameProcessDetectionResult classifyGameProcesses(
+    const ProcessEnumerationResult& enumeration);
+
+inline bool gameProcessStateBlocksOperation(GameProcessState state)
+{
+    return state != GameProcessState::NotRunning;
+}
+
+inline bool gameProcessStateAllowsStartup(GameProcessState state)
+{
+    return state == GameProcessState::NotRunning;
+}
 
 inline GameProcessState gameProcessStateFromFlags(bool ets2Running, bool atsRunning)
 {

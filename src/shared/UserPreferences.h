@@ -1,6 +1,9 @@
 #pragma once
 
 #include <QString>
+#include <QStringList>
+
+#include <QJsonObject>
 
 namespace nlsi {
 
@@ -47,6 +50,10 @@ struct ApiSettings
 bool isValidPreferences(const UserPreferences& preferences);
 bool normalizeApiBaseUrl(const QString& value, QString& normalized, QString* error = nullptr);
 bool isSupportedAccountRole(const QString& role);
+bool isAccountInactive(const QJsonObject& account, const QString& fallbackStatus = QString());
+bool isAccountRepresentative(const QJsonObject& account);
+QStringList accountDesignationLabels(const QJsonObject& account);
+QString displayAccountRole(const QString& primaryRole, const QJsonObject& account);
 
 class ProfileStore
 {
