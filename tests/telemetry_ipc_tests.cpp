@@ -68,6 +68,34 @@ int main()
     ok = check(escapedDecoded.values.at("job.cargo").value == "Steel | beams\nheavy",
                "escaped field delimiters round-trip") && ok;
 
+    nlsi::TelemetrySnapshot freightMarketTrailer;
+    freightMarketTrailer.status = nlsi::ConnectionState::Connected;
+    freightMarketTrailer.gameId = "eut2";
+    freightMarketTrailer.values["job.market"] =
+        {"Job Market", "freight_market", "", true};
+    freightMarketTrailer.values["trailer.connected"] =
+        {"Trailer Connected", "true", "", true};
+    freightMarketTrailer.values["trailer.id"] =
+        {"Trailer ID", "market.box", "", true};
+    freightMarketTrailer.values["trailer.brand"] =
+        {"Trailer Brand", "Krone", "", true};
+    freightMarketTrailer.values["trailer.name"] =
+        {"Trailer Name", "Box Liner", "", true};
+    freightMarketTrailer.values["trailer.type"] =
+        {"Trailer Type", "box", "", true};
+    freightMarketTrailer.values["trailer.details"] =
+        {"Trailers", "Krone Box Liner", "", true};
+    freightMarketTrailer.values["trailer.license_plate"] =
+        {"Trailer Plate", "FRT-123", "", true};
+    const nlsi::TelemetrySnapshot trailerRoundTrip =
+        nlsi::decodeTelemetryFrame(nlsi::encodeTelemetryFrame(freightMarketTrailer));
+    ok = check(trailerRoundTrip.values.at("job.market").value == "freight_market" &&
+               trailerRoundTrip.values.at("trailer.connected").value == "true" &&
+               trailerRoundTrip.values.at("trailer.id").value == "market.box" &&
+               trailerRoundTrip.values.at("trailer.details").value == "Krone Box Liner" &&
+               trailerRoundTrip.values.at("trailer.license_plate").value == "FRT-123",
+               "Freight Market trailer configuration and connection state round-trip through IPC") && ok;
+
     ok = check(nlsi::gameProcessStateFromFlags(false, false) == nlsi::GameProcessState::NotRunning,
                "neither game process detected") && ok;
     ok = check(nlsi::gameProcessStateFromFlags(true, false) == nlsi::GameProcessState::Ets2Running,

@@ -797,7 +797,7 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
     const bool profileLoaded = profileStore_.load(preferences_, &profileError);
     const bool apiSettingsLoaded = profileStore_.loadApiSettings(apiSettings_, &apiSettingsLoadError_);
     networkManager_ = new QNetworkAccessManager(this);
-    setWindowTitle("NLSI Exclusive Logbook 1.9.4 Beta");
+    setWindowTitle("NLSI Exclusive Logbook 1.9.6 Beta");
     const QString iconPath = QFileInfo(QDir::currentPath(), "resources/nlsi.ico").exists()
         ? QDir::currentPath() + "/resources/nlsi.ico"
         : QCoreApplication::applicationDirPath() + "/resources/nlsi.ico";
@@ -913,7 +913,7 @@ DashboardMainWindow::DashboardMainWindow(QWidget* parent, const QString& jobHist
     statusBar->setStyleSheet(
         "QStatusBar { background: #FFF7FA; border-top: 1px solid #FFD1E6; color: #665B62; font: 700 10px 'Segoe UI'; padding: 0 8px; }"
     );
-    statusBar->showMessage("LOCAL TELEMETRY • VERSION 1.9.4 BETA");
+    statusBar->showMessage("LOCAL TELEMETRY • VERSION 1.9.6 BETA");
     setStatusBar(statusBar);
     if (!jobHistory_.errorString().isEmpty())
     {
@@ -1125,7 +1125,7 @@ void DashboardMainWindow::buildSidebar()
     footerDivider->setFrameShadow(QFrame::Plain);
     footerDivider->setStyleSheet("QFrame { color: #FFD1E6; background: #FFD1E6; max-height: 1px; }");
     layout->addWidget(footerDivider);
-    auto* version = new QLabel("1.9.4 BETA", sidebar_);
+    auto* version = new QLabel("1.9.6 BETA", sidebar_);
     version->setObjectName("sidebarSubtitle");
     layout->addWidget(version);
 }
@@ -3734,18 +3734,10 @@ void DashboardMainWindow::applySnapshot(const TelemetrySnapshot& snapshot)
         viewSnapshot.values["trailer.details"] = {"Trailers", "", "", false};
         viewSnapshot.values["trailer.license_plate"] = {"Trailer Plate", "", "", false};
     }
-    if (!jobHistory_.activeJob() && previousActiveJob &&
-        (deliveredEvent || (incomingJobStatus != snapshot.values.end() &&
-         incomingJobStatus->second.available &&
-         jobStatusFromString(incomingJobStatus->second.value) == JobStatus::Cancelled)))
+    else if (!jobHistory_.activeJob() && !startsJob)
     {
-        for (const auto& field : previousActiveJob->snapshot.values)
-        {
-            if (field.first.compare(0, 8, "trailer.") == 0)
-            {
-                viewSnapshot.values[field.first] = field.second;
-            }
-        }
+        viewSnapshot.values["trailer.details"] = {"Trailers", "", "", false};
+        viewSnapshot.values["trailer.license_plate"] = {"Trailer Plate", "", "", false};
     }
     if (historyUpdated && !jobHistory_.activeJob())
     {

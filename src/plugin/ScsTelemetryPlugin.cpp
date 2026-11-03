@@ -21,6 +21,7 @@
 #include "common/scssdk_telemetry_common_configs.h"
 #include "common/scssdk_telemetry_common_gameplay_events.h"
 #include "common/scssdk_telemetry_job_common_channels.h"
+#include "common/scssdk_telemetry_trailer_common_channels.h"
 #include "common/scssdk_telemetry_truck_common_channels.h"
 #include "eurotrucks2/scssdk_eut2.h"
 #include "scssdk_telemetry.h"
@@ -37,8 +38,19 @@ std::atomic<bool> g_stopWorker{false};
 std::thread g_ipcWorker;
 HANDLE g_pipe = INVALID_HANDLE_VALUE;
 scs_log_t g_gameLog = nullptr;
+
+struct TrailerConfiguration
+{
+    std::string id;
+    std::string brand;
+    std::string name;
+    std::string type;
+    std::string licensePlate;
+};
+
 std::mutex g_trailerMutex;
-std::map<std::string, std::pair<std::string, std::string>> g_trailers;
+std::map<std::string, TrailerConfiguration> g_trailers;
+std::map<std::string, bool> g_trailerConnections;
 double g_lastFuelAmount = 0.0;
 bool g_lastFuelAvailable = false;
 double g_jobFuelConsumed = 0.0;
@@ -49,6 +61,9 @@ double g_jobSpeedSeconds = 0.0;
 std::chrono::steady_clock::time_point g_lastSpeedSample;
 bool g_jobInProgress = false;
 bool g_gameDriving = false;
+
+std::string trailerKeyFromConnectedChannel(const char* name, scs_u32_t index);
+void publishTrailerConnection(const std::string& trailerKey, bool connected);
 
 std::string formatFloat(const scs_float_t value)
 {
@@ -228,7 +243,15 @@ SCSAPI_VOID onChannelValue(
     }
 
     const bool available = value != nullptr;
-    if (std::strcmp(name, SCS_TELEMETRY_TRUCK_CHANNEL_fuel) == 0)
+    const std::string trailerKey = trailerKeyFromConnectedChannel(name, index);
+    if (!trailerKey.empty())
+    {
+        if (available)
+        {
+            publishTrailerConnection(trailerKey, value->value_bool.value);
+        }
+    }
+    else if (std::strcmp(name, SCS_TELEMETRY_TRUCK_CHANNEL_fuel) == 0)
     {
         const double fuel = available ? value->value_float.value : 0.0;
         if (available)
@@ -404,6 +427,107 @@ void publishConfigurationField(
     publishField(key, {label, std::move(value), unit, available});
 }
 
+void publishTrailerConfiguration()
+{
+    std::string descriptions;
+    std::string ids;
+    std::string brands;
+    std::string names;
+    std::string types;
+    std::string plates;
+    {
+        std::lock_guard<std::mutex> lock(g_trailerMutex);
+        const auto append = [](std::string& list, const std::string& value)
+        {
+            if (value.empty())
+            {
+                return;
+            }
+            if (!list.empty())
+            {
+                list += ", ";
+            }
+            list += value;
+        };
+        for (const auto& entry : g_trailers)
+        {
+            const TrailerConfiguration& trailer = entry.second;
+            std::string description = trailer.brand;
+            if (!trailer.name.empty())
+            {
+                if (!description.empty()) description += " ";
+                description += trailer.name;
+            }
+            if (description.empty())
+            {
+                description = !trailer.type.empty() ? trailer.type : trailer.id;
+            }
+            append(descriptions, description);
+            append(ids, trailer.id);
+            append(brands, trailer.brand);
+            append(names, trailer.name);
+            append(types, trailer.type);
+            append(plates, trailer.licensePlate);
+        }
+    }
+
+    publishConfigurationField("trailer.details", "Trailers", std::move(descriptions));
+    publishConfigurationField("trailer.id", "Trailer ID", std::move(ids));
+    publishConfigurationField("trailer.brand", "Trailer Brand", std::move(brands));
+    publishConfigurationField("trailer.name", "Trailer Name", std::move(names));
+    publishConfigurationField("trailer.type", "Trailer Type", std::move(types));
+    publishConfigurationField("trailer.license_plate", "Trailer Plate", std::move(plates));
+}
+
+std::string trailerKeyFromConnectedChannel(const char* const name, const scs_u32_t index)
+{
+    constexpr char suffix[] = ".connected";
+    const std::string channel = name ? name : "";
+    if (channel == SCS_TELEMETRY_TRAILER_CHANNEL_connected)
+    {
+        return index == SCS_U32_NIL
+            ? "trailer.0"
+            : "trailer." + std::to_string(index);
+    }
+
+    if (channel.compare(0, 8, "trailer.") == 0 &&
+        channel.size() > sizeof(suffix) - 1 &&
+        channel.compare(channel.size() - (sizeof(suffix) - 1),
+                        sizeof(suffix) - 1, suffix) == 0)
+    {
+        return channel.substr(0, channel.size() - (sizeof(suffix) - 1));
+    }
+    return {};
+}
+
+void publishTrailerConnection(const std::string& trailerKey, const bool connected)
+{
+    bool anyConnected = false;
+    bool noConfiguredTrailers = false;
+    {
+        std::lock_guard<std::mutex> lock(g_trailerMutex);
+        g_trailerConnections[trailerKey] = connected;
+        anyConnected = std::any_of(g_trailerConnections.begin(), g_trailerConnections.end(),
+            [](const auto& entry) { return entry.second; });
+        if (!connected)
+        {
+            g_trailers.erase(trailerKey);
+        }
+        noConfiguredTrailers = g_trailers.empty();
+    }
+
+    if (anyConnected || noConfiguredTrailers)
+    {
+        publishField("trailer.connected", {
+            "Trailer Connected", anyConnected ? "true" : "false", "", true
+        });
+    }
+    if (!connected)
+    {
+        publishTrailerConfiguration();
+    }
+}
+
 void publishTripStatistics()
 {
     publishConfigurationField("job.total_fuel_consumed", "Total Fuel Consumed",
@@ -545,6 +669,8 @@ SCSAPI_VOID onTelemetryEvent(
             numericAttribute(attributes, SCS_TELEMETRY_CONFIG_ATTRIBUTE_planned_distance_km), "km");
         publishConfigurationField("job.special_cargo", "Special Cargo",
             boolAttribute(attributes, SCS_TELEMETRY_CONFIG_ATTRIBUTE_special_job));
+        publishConfigurationField("job.market", "Job Market",
+            stringAttribute(attributes, SCS_TELEMETRY_CONFIG_ATTRIBUTE_job_market));
     }
     else if (id == SCS_TELEMETRY_CONFIG_truck)
     {
@@ -564,58 +690,64 @@ SCSAPI_VOID onTelemetryEvent(
     }
     else if (id == SCS_TELEMETRY_CONFIG_trailer || id.rfind("trailer.", 0) == 0)
     {
-        const std::string brand = stringAttribute(attributes, SCS_TELEMETRY_CONFIG_ATTRIBUTE_brand);
-        const std::string name = stringAttribute(attributes, SCS_TELEMETRY_CONFIG_ATTRIBUTE_name);
-        std::string description = brand;
-        if (!name.empty())
+        TrailerConfiguration trailer;
+        trailer.id = stringAttribute(attributes, SCS_TELEMETRY_CONFIG_ATTRIBUTE_id);
+        trailer.brand = stringAttribute(attributes, SCS_TELEMETRY_CONFIG_ATTRIBUTE_brand);
+        trailer.name = stringAttribute(attributes, SCS_TELEMETRY_CONFIG_ATTRIBUTE_name);
+        trailer.type = stringAttribute(attributes, SCS_TELEMETRY_CONFIG_ATTRIBUTE_body_type);
+        const std::string chainType =
+            stringAttribute(attributes, SCS_TELEMETRY_CONFIG_ATTRIBUTE_chain_type);
+        if (!chainType.empty())
         {
-            if (!description.empty()) description += " ";
-            description += name;
+            if (!trailer.type.empty()) trailer.type += " / ";
+            trailer.type += chainType;
         }
-        const std::string plate =
+        trailer.licensePlate =
             stringAttribute(attributes, SCS_TELEMETRY_CONFIG_ATTRIBUTE_license_plate);
         const std::string trailerId = id == SCS_TELEMETRY_CONFIG_trailer ? "trailer.0" : id;
-        std::string descriptions;
-        std::string plates;
         {
             std::lock_guard<std::mutex> lock(g_trailerMutex);
-            if (description.empty() && plate.empty())
+            if (trailer.id.empty() && trailer.brand.empty() && trailer.name.empty() &&
+                trailer.type.empty() && trailer.licensePlate.empty())
             {
                 g_trailers.erase(trailerId);
             }
             else
             {
-                g_trailers[trailerId] = {std::move(description), plate};
-            }
-            for (const auto& trailer : g_trailers)
-            {
-                if (!trailer.second.first.empty())
-                {
-                    if (!descriptions.empty()) descriptions += ", ";
-                    descriptions += trailer.second.first;
-                }
-                if (!trailer.second.second.empty())
-                {
-                    if (!plates.empty()) plates += ", ";
-                    plates += trailer.second.second;
-                }
+                g_trailers[trailerId] = std::move(trailer);
             }
         }
-        publishConfigurationField("trailer.details", "Trailers", std::move(descriptions));
-        publishConfigurationField("trailer.license_plate", "Trailer Plate", std::move(plates));
+        publishTrailerConfiguration();
+        bool noConfiguredTrailers = false;
+        {
+            std::lock_guard<std::mutex> lock(g_trailerMutex);
+            noConfiguredTrailers = g_trailers.empty();
+            if (noConfiguredTrailers)
+            {
+                g_trailerConnections.clear();
+            }
+        }
+        if (noConfiguredTrailers)
+        {
+            publishField("trailer.connected", {
+                "Trailer Connected", "false", "", true
+            });
+        }
     }
 }
 
 void registerChannel(
     const scs_telemetry_register_for_channel_t registerForChannel,
     const char* const channel,
-    const scs_value_type_t type)
+    const scs_value_type_t type,
+    const scs_u32_t flags = SCS_TELEMETRY_CHANNEL_FLAG_no_value |
+                           SCS_TELEMETRY_CHANNEL_FLAG_each_frame)
 {
     const scs_result_t result = registerForChannel(
         channel,
         SCS_U32_NIL,
         type,
-        SCS_TELEMETRY_CHANNEL_FLAG_no_value | SCS_TELEMETRY_CHANNEL_FLAG_each_frame,
+        flags,
         onChannelValue,
         nullptr);
     if (result != SCS_RESULT_ok)
@@ -675,6 +807,7 @@ SCSAPI_RESULT scs_telemetry_init(
     {
         std::lock_guard<std::mutex> lock(g_trailerMutex);
         g_trailers.clear();
+        g_trailerConnections.clear();
     }
     g_lastFuelAmount = 0.0;
     g_lastFuelAvailable = false;
@@ -737,6 +870,18 @@ SCSAPI_RESULT scs_telemetry_init(
     registerChannel(init->register_for_channel, SCS_TELEMETRY_TRUCK_CHANNEL_parking_brake, SCS_VALUE_TYPE_bool);
     registerChannel(init->register_for_channel, SCS_TELEMETRY_TRUCK_CHANNEL_navigation_distance, SCS_VALUE_TYPE_float);
     registerChannel(init->register_for_channel, SCS_TELEMETRY_TRUCK_CHANNEL_navigation_time, SCS_VALUE_TYPE_float);
+
+    static const char* const trailerConnectedChannels[] = {
+        "trailer.0.connected", "trailer.1.connected", "trailer.2.connected",
+        "trailer.3.connected", "trailer.4.connected", "trailer.5.connected",
+        "trailer.6.connected", "trailer.7.connected", "trailer.8.connected",
+        "trailer.9.connected"
+    };
+    for (const char* const channel : trailerConnectedChannels)
+    {
+        registerChannel(init->register_for_channel, channel, SCS_VALUE_TYPE_bool,
+            SCS_TELEMETRY_CHANNEL_FLAG_no_value);
+    }
 
     return SCS_RESULT_ok;
 }

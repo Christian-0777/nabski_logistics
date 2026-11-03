@@ -2,16 +2,20 @@
 
 **Windows telemetry dashboard and delivery logbook for Euro Truck Simulator 2 and American Truck Simulator.**
 
-[![Latest documented release](https://img.shields.io/badge/release-v1.9.4%20Beta-e05a98)](https://github.com/Christian-0777/nabski_logistics/releases/tag/v1.9.4-beta)
+[![Latest documented release](https://img.shields.io/badge/release-v1.9.6%20Beta-e05a98)](https://github.com/Christian-0777/nabski_logistics/releases)
 [![Status](https://img.shields.io/badge/status-beta-orange)](https://github.com/Christian-0777/nabski_logistics/releases)
 
-> **Project status: Beta / active development.** Current documented version: **v1.9.4 Beta**.
+> **Project status: Beta / active development.** Current documented version: **v1.9.6 Beta**.
 
 ## Download
 
-- **[Download NLSI Exclusive Logbook v1.9.4 Beta](https://github.com/Christian-0777/nabski_logistics/releases/tag/v1.9.4-beta)**
+- **v1.9.6 Beta candidate** — built artifacts are in
+  [`releases\1.9.6-beta`](releases/1.9.6-beta), including
+  [NLSI-Exclusive-Logbook-v1.9.6-beta-Setup.exe](releases/1.9.6-beta/NLSI-Exclusive-Logbook-v1.9.6-beta-Setup.exe).
+  This candidate is not yet identified as published on GitHub.
 - [View all published releases](https://github.com/Christian-0777/nabski_logistics/releases)
 - [Detailed release notes](RELEASE_NOTES.md)
+- [v1.9.6 Beta installation notes](docs/INSTALLATION-v1.9.6-beta.md)
 
 Download installers only from the project's official GitHub Releases page.
 ## Supported games
@@ -27,6 +31,9 @@ These are the supported games documented for this project. Telemetry availabilit
 
 - Dashboard for available vehicle, driving, navigation, and job telemetry.
 - Current-job information and completed-job history.
+- Active jobs display their job-specific trailer and trailer plate; Freight
+  Market trailer identification is improved, and idle/no-active-job trailer
+  fields display an em dash.
 - Local delivery/session records in the application's `.nlsi` format.
 - Local communication between the game telemetry plugin and desktop application.
 - Optional authenticated NLSI VTC profile and job synchronization when configured.
@@ -68,10 +75,12 @@ Do not manually delete game plugin files or local application data unless the re
 
 ## Release summaries
 
-The following summaries describe changes recorded in the project's release documentation. All versions listed are **Beta**. Versions 1.9.0–1.9.4 are included from the release-note documents supplied for this README; their documentation does not by itself confirm publication on GitHub. See [RELEASE_NOTES.md](RELEASE_NOTES.md), the individual versioned notes in the repository, and the [official Releases page](https://github.com/Christian-0777/nabski_logistics/releases) for publication status and downloadable assets.
+The following summaries describe changes recorded in the project's release documentation. All versions listed are **Beta**. Versions 1.9.0–1.9.5 are included from the release-note documents supplied for this README; their documentation does not by itself confirm publication on GitHub. See [RELEASE_NOTES.md](RELEASE_NOTES.md), the individual versioned notes in the repository, and the [official Releases page](https://github.com/Christian-0777/nabski_logistics/releases) for publication status and downloadable assets.
 
 | Version | Summary of documented changes |
 |---|---|
+| **1.9.6 Beta** | Separates active-job trailer data from idle attached-trailer telemetry; improves Freight Market trailer identification, retains valid job data through temporary telemetry gaps, and clears trailer fields between jobs. |
+| **1.9.5 Beta** | Captures Freight Market trailer details from SCS SDK 1.16 configuration and connection telemetry; retains active-job trailer values and clears them on confirmed detachment. |
 | **1.9.4 Beta** | Migrates the Windows build and telemetry plugin to SCS SDK 1.16; retains the existing telemetry events and callback API; updates version metadata and release packaging. |
 | **1.9.3 Beta** | Corrected Windows process detection using Tool Help snapshots; exact case-insensitive ETS2/ATS executable matching; clearer enumeration errors; shared detection for startup/status/close checks; automated process-detection and handle-cleanup tests. |
 | **1.9.2 Beta** | Captured trailer details and plate from pre-job telemetry; prevented active-job trailer changes from overwriting saved values; corrected profile image cropping and circular clipping; added game-running startup and shutdown restrictions. |

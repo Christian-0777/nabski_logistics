@@ -13,7 +13,7 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     app.setApplicationName("NLSI Exclusive Logbook");
     app.setApplicationDisplayName("NLSI Exclusive Logbook");
-    app.setApplicationVersion("1.9.4 Beta");
+    app.setApplicationVersion("1.9.6 Beta");
 
     const nlsi::GameProcessDetectionResult detection = nlsi::detectGameProcesses();
     if (!nlsi::gameProcessStateAllowsStartup(detection.state))

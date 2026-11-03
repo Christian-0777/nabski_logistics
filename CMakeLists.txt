@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(nlsi_exclusive_logbook VERSION 1.9.4 LANGUAGES CXX)
+project(nlsi_exclusive_logbook VERSION 1.9.6 LANGUAGES CXX)
 
 if(WIN32)
     enable_language(RC)

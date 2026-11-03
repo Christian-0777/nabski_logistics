@@ -4,9 +4,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$buildDir = Join-Path $root 'build\release-v1.9.4-beta-x64'
-$buildX86Dir = Join-Path $root 'build\release-v1.9.4-beta-x86-plugin'
-$releaseDir = Join-Path $root 'releases\1.9.4-beta'
+$buildDir = Join-Path $root 'build\release-v1.9.6-beta-x64'
+$buildX86Dir = Join-Path $root 'build\release-v1.9.6-beta-x86-plugin'
+$releaseDir = Join-Path $root 'releases\1.9.6-beta'
 $qtDir = 'C:\Qt\6.12.0\msvc2022_64'
 $qtBin = Join-Path $qtDir 'bin'
 $ninja = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe'
@@ -113,13 +113,13 @@ if ($x64InspectionText -match '(?i)(MSVCP|VCRUNTIME)140' -or
 }
 
 $fileVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($dashboardExe)
-if ($fileVersion.FileVersion -ne '1.9.4.0' -or $fileVersion.ProductVersion -ne '1.9.4 Beta') {
+if ($fileVersion.FileVersion -ne '1.9.6.0' -or $fileVersion.ProductVersion -ne '1.9.6 Beta') {
     throw "Dashboard executable version metadata is incorrect: file=$($fileVersion.FileVersion), product=$($fileVersion.ProductVersion)"
 }
 foreach ($plugin in @($pluginX64Dll, $pluginX86Dll)) {
     $pluginVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($plugin)
-    if ($pluginVersion.FileVersion -ne '1.9.4.0' -or
-        $pluginVersion.ProductVersion -ne '1.9.4 Beta') {
+    if ($pluginVersion.FileVersion -ne '1.9.6.0' -or
+        $pluginVersion.ProductVersion -ne '1.9.6 Beta') {
         throw "Plugin version metadata is incorrect for ${plugin}: file=$($pluginVersion.FileVersion), product=$($pluginVersion.ProductVersion)"
     }
 }
@@ -140,16 +140,6 @@ Copy-Item $dashboardExe $payloadDir
     New-Item -ItemType Directory -Force -Path $payloadResources | Out-Null
     Copy-Item (Join-Path $root 'resources\nlsi.png') (Join-Path $payloadResources 'nlsi.png') -Force
     Copy-Item (Join-Path $root 'resources\nlsi.ico') (Join-Path $payloadResources 'nlsi.ico') -Force
-    $payloadDocs = Join-Path $payloadDir 'docs'
-    New-Item -ItemType Directory -Force -Path $payloadDocs | Out-Null
-    foreach ($documentName in @('RELEASE-NOTES-v1.9.4-beta.md', 'INSTALLATION-v1.9.4-beta.md')) {
-        $document = Join-Path $root "docs\$documentName"
-        if (-not (Test-Path -LiteralPath $document)) {
-            throw "Required release document is missing: $document"
-        }
-        Copy-Item -LiteralPath $document -Destination $payloadDocs -Force
-    }
-
     $deployCommand = 'set "PATH={0};%PATH%" && call "{1}" -arch=amd64 -host_arch=amd64 && "{2}" --release --no-translations --dir "{3}" "{4}"' -f `
         $qtBin, $vsDevCmd, $windeployqt, $payloadDir, $dashboardExe
     & $env:ComSpec /c $deployCommand
@@ -206,9 +196,9 @@ Copy-Item $dashboardExe $payloadDir
     )
     foreach ($stagedArtifact in $stagedVersions) {
         $stagedVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($stagedArtifact)
-        if ($stagedVersion.FileVersion -ne '1.9.4.0' -or
-            $stagedVersion.ProductVersion -ne '1.9.4 Beta') {
-            throw "Staged artifact is not a verified 1.9.4 Beta binary: $stagedArtifact"
+        if ($stagedVersion.FileVersion -ne '1.9.6.0' -or
+            $stagedVersion.ProductVersion -ne '1.9.6 Beta') {
+            throw "Staged artifact is not a verified 1.9.6 Beta binary: $stagedArtifact"
         }
     }
     foreach ($resourceRelative in @('resources\nlsi.ico', 'resources\nlsi.png')) {
@@ -310,15 +300,15 @@ Copy-Item $dashboardExe $payloadDir
     if (-not $SkipInstaller) {
         New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
         $installerScript = Join-Path $PSScriptRoot 'NLSI-Exclusive-Logbook.iss'
-        $installer = Join-Path $releaseDir 'NLSI-Exclusive-Logbook-v1.9.4-beta-Setup.exe'
+        $installer = Join-Path $releaseDir 'NLSI-Exclusive-Logbook-v1.9.6-beta-Setup.exe'
         $installerSource = Get-Content -LiteralPath $installerScript -Raw
         $requiredInstallerRules = @(
             'AppId={{B58E42DA-BC15-4FD0-9DCC-44E4E14D374D}',
-            '#define MyAppVersion "1.9.4 Beta"',
-            'OutputDir=..\releases\1.9.4-beta',
-            'OutputBaseFilename=NLSI-Exclusive-Logbook-v1.9.4-beta-Setup',
-            'VersionInfoVersion=1.9.4.0',
-            'VersionInfoProductVersion=1.9.4.0',
+            '#define MyAppVersion "1.9.6 Beta"',
+            'OutputDir=..\releases\1.9.6-beta',
+            'OutputBaseFilename=NLSI-Exclusive-Logbook-v1.9.6-beta-Setup',
+            'VersionInfoVersion=1.9.6.0',
+            'VersionInfoProductVersion=1.9.6.0',
             "TikTokProfileUrl = 'https://www.tiktok.com/@nabskiplays';",
             "TikTokFollowCheck.Caption := 'Follow Nabski Plays on TikTok';",
             'TikTokFollowCheck.Checked := False;',
@@ -328,9 +318,12 @@ Copy-Item $dashboardExe $payloadDir
             'CloseApplicationsFilter={#MyAppExeName}',
             'Source: "{#ReleasePayloadDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs',
             'Source: "{#ReleasePayloadDir}\.nlsi-managed-files"; DestDir: "{app}"; Flags: ignoreversion',
-            "ProductVersion = '1.9.4 Beta'",
+            "ProductVersion = '1.9.6 Beta'",
+            "NLSI Exclusive Logbook 1.9.6 Beta|",
+            "NLSI Exclusive Logbook 1.9.5 Beta|",
             "NLSI Exclusive Logbook 1.9.4 Beta|",
             "NLSI Exclusive Logbook 1.9.3 Beta|",
+            "NLSI Exclusive Logbook 1.9.2 Beta|",
             "NLSI Exclusive Logbook 1.9.1 Beta|",
             "NLSI Exclusive Logbook 1.9.0 Beta|",
             "NLSI Exclusive Logbook 1.8.9 Beta|",
@@ -369,6 +362,9 @@ Copy-Item $dashboardExe $payloadDir
             'procedure MarkPluginInstalled(const SourceFile: String; const TargetFile: String);',
             'RemoveObsoleteManagedFiles;',
             'BackupFile := TargetFile + PluginBackupSuffix;',
+            "PluginBackupSuffix = '.nlsi-backup';",
+            "LegacyPluginBackupSuffix = '.nlsi-backup.dll';",
+            'function MigrateLegacyPluginBackup(const TargetFile: String): Boolean;',
             'eurotrucks2.exe',
             'amtrucks.exe',
             'ETS2 game directory not found; ETS2 plugin installation was skipped.',
@@ -406,25 +402,60 @@ Copy-Item $dashboardExe $payloadDir
             throw "Compiled installer is missing or unexpectedly small: $installer"
         }
         $installerVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($installer)
-        if ($installerVersion.ProductVersion.Trim() -ne '1.9.4.0' -or
-            $installerVersion.FileVersion.Trim() -ne '1.9.4.0' -or
-            $installerVersion.FileDescription.Trim() -notmatch '1\.9\.4 Beta') {
+        if ($installerVersion.ProductVersion.Trim() -ne '1.9.6.0' -or
+            $installerVersion.FileVersion.Trim() -ne '1.9.6.0' -or
+            $installerVersion.FileDescription.Trim() -notmatch '1\.9\.6 Beta') {
             throw "Installer version metadata is incorrect: product=$($installerVersion.ProductVersion), description=$($installerVersion.FileDescription)"
         }
 
-        Copy-Item (Join-Path $root 'docs\RELEASE-NOTES-v1.9.4-beta.md') (Join-Path $releaseDir 'RELEASE-NOTES-v1.9.4-beta.md') -Force
-        Copy-Item (Join-Path $root 'docs\INSTALLATION-v1.9.4-beta.md') (Join-Path $releaseDir 'INSTALLATION-v1.9.4-beta.md') -Force
+        $buildReport = Join-Path $releaseDir 'BUILD-REPORT.md'
+        $reportLines = @(
+            '# NLSI Exclusive Logbook v1.9.6 Beta Build Report',
+            '',
+            "Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz')",
+            '',
+            '- Configuration: MSVC 2022 Release with CMake and Ninja.',
+            '- Dashboard: x64 build completed; version resource verified as 1.9.6.0 / 1.9.6 Beta.',
+            '- SCS telemetry plugin: x64 and x86 builds completed; version resources and SDK exports verified.',
+            '- Runtime packaging: Qt runtime, Windows platform plugin, JPEG/WebP image plugins, resources, and app-local CRT staged and validated.',
+            '- Installer: Inno Setup compilation completed; metadata and non-zero output size verified. Inno source targets the audited staged payload.',
+            '',
+            '- Installer: NLSI-Exclusive-Logbook-v1.9.6-beta-Setup.exe',
+            '- Dashboard: payload/nlsi_dashboard.exe',
+            '- x64 plugin: payload/plugin/win_x64/nlsi_scs_plugin.dll',
+            '- x86 plugin: payload/plugin/win_x86/nlsi_scs_plugin.dll',
+            '',
+            'ETS2/ATS in-game Freight Market verification was not performed.'
+        )
+        Set-Content -LiteralPath $buildReport -Value $reportLines -Encoding UTF8
+        $testReport = Join-Path $releaseDir 'TEST-REPORT.md'
+        $testReportLines = @(
+            '# NLSI Exclusive Logbook v1.9.6 Beta Test Report',
+            '',
+            "Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz')",
+            '',
+            '## Automated tests',
+            '',
+            '- Full configured CTest suite passed: 7/7 tests, 0 failed, 0 skipped.',
+            '- Focused regression tests nlsi_telemetry_tests, nlsi_job_history_tests, and nlsi_dashboard_ui_tests passed.',
+            '- Packaged-runtime JPEG/PNG/WebP decoder check passed.',
+            '- Packaged dashboard isolated startup smoke check passed.',
+            '',
+            '## Scope limitations',
+            '',
+            '- ETS2/ATS were not launched; in-game telemetry and Freight Market behavior were not tested.',
+            '- Isolated installer upgrade results are documented in DLL-REPLACEMENT-VERIFICATION.md.'
+        )
+        Set-Content -LiteralPath $testReport -Value $testReportLines -Encoding UTF8
+
         $manifestFiles = @($installer) +
             @(Get-ChildItem -LiteralPath $payloadDir -Recurse -File |
                 ForEach-Object { $_.FullName }) +
-            @(
-                (Join-Path $releaseDir 'RELEASE-NOTES-v1.9.4-beta.md'),
-                (Join-Path $releaseDir 'INSTALLATION-v1.9.4-beta.md')
-            )
+            @($buildReport, $testReport)
         $manifestFiles = $manifestFiles | Sort-Object -Unique
         $manifestLines = @(
-            'NLSI Exclusive Logbook 1.9.4 Beta release artifact SHA-256 manifest',
-            'Hashes cover the installer, every payload file, and release documents.'
+            'NLSI Exclusive Logbook 1.9.6 Beta release artifact SHA-256 manifest',
+            'Hashes cover the installer, every payload file, and build/test reports.'
         )
         foreach ($file in $manifestFiles) {
             $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant()

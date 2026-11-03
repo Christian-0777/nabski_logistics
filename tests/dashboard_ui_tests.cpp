@@ -187,19 +187,19 @@ int main(int argc, char** argv)
     trailerWindow.applySnapshot(activeTrailerJob);
     auto* activeTrailerValue = trailerWindow.findChild<QLabel*>("trailerValue");
     auto* activeTrailerPlateValue = trailerWindow.findChild<QLabel*>("trailerPlateValue");
-    if (!activeTrailerValue || activeTrailerValue->text() != "OWNED FLATBED" ||
-        !activeTrailerPlateValue || activeTrailerPlateValue->text() != "OWNED-1")
+    if (!activeTrailerValue || activeTrailerValue->text() != "ASSIGNED TRAILER" ||
+        !activeTrailerPlateValue || activeTrailerPlateValue->text() != "JOB-9")
     {
-        std::cerr << "The dashboard did not retain the pre-job trailer details.\n";
+        std::cerr << "The dashboard did not display the active job's trailer details.\n";
         return 1;
     }
     activeTrailerJob.values["trailer.details"] = {"Trailers", "Another Active Trailer", "", true};
     activeTrailerJob.values["trailer.license_plate"] = {"Trailer Plate", "JOB-10", "", true};
     trailerWindow.applySnapshot(activeTrailerJob);
-    if (activeTrailerValue->text() != "OWNED FLATBED" ||
-        activeTrailerPlateValue->text() != "OWNED-1")
+    if (activeTrailerValue->text() != "ANOTHER ACTIVE TRAILER" ||
+        activeTrailerPlateValue->text() != "JOB-10")
     {
-        std::cerr << "Active trailer telemetry replaced the dashboard's pre-job trailer details.\n";
+        std::cerr << "Updated active trailer telemetry was not displayed.\n";
         return 1;
     }
     QTemporaryDir noTrailerJobDirectory;
@@ -214,11 +214,15 @@ int main(int argc, char** argv)
     activeWithoutPreJobTrailer.values["job.status"] = {"Status", "ACTIVE", "", true};
     activeWithoutPreJobTrailer.values["job.cargo"] = {"Cargo", "Steel", "", true};
     activeWithoutPreJobTrailer.values["trailer.details"] = {"Trailers", "Assigned Trailer", "", true};
+    activeWithoutPreJobTrailer.values["trailer.license_plate"] =
+        {"Trailer Plate", "JOB-11", "", true};
     noTrailerWindow.applySnapshot(activeWithoutPreJobTrailer);
     auto* noPreJobTrailerValue = noTrailerWindow.findChild<QLabel*>("trailerValue");
-    if (!noPreJobTrailerValue || noPreJobTrailerValue->text() != QString::fromUtf8("—"))
+    auto* noPreJobTrailerPlate = noTrailerWindow.findChild<QLabel*>("trailerPlateValue");
+    if (!noPreJobTrailerValue || noPreJobTrailerValue->text() != "ASSIGNED TRAILER" ||
+        !noPreJobTrailerPlate || noPreJobTrailerPlate->text() != "JOB-11")
     {
-        std::cerr << "A job-assigned trailer was displayed when no pre-job trailer existed.\n";
+        std::cerr << "The dashboard did not display a job trailer without pre-job trailer data.\n";
         return 1;
     }
     QJsonObject representativeInactiveAccount;
@@ -233,9 +237,10 @@ int main(int argc, char** argv)
         std::cerr << "Representative and inactive account designation handling is incorrect.\n";
         return 1;
     }
-    if (window.windowTitle() != "NLSI Exclusive Logbook 1.9.4 Beta")
+    if (window.windowTitle() != "NLSI Exclusive Logbook 1.9.6 Beta" ||
+        window.statusBar()->currentMessage() != "LOCAL TELEMETRY • VERSION 1.9.6 BETA")
     {
-        std::cerr << "The dashboard window title does not report v1.9.4 Beta.\n";
+        std::cerr << "The dashboard title or status bar does not report v1.9.6 Beta.\n";
         return 1;
     }
     auto* taskCard = window.findChild<QGroupBox*>("profileTaskCard");
@@ -327,6 +332,15 @@ int main(int argc, char** argv)
     auto* profileScroll = window.findChild<QScrollArea*>("profileScroll");
     auto* brandName = window.findChild<QLabel*>("sidebarTitle");
     auto* brandSubtitle = window.findChild<QLabel*>("sidebarSubtitle");
+    bool hasSidebarReleaseVersion = false;
+    for (auto* label : window.findChildren<QLabel*>("sidebarSubtitle"))
+    {
+        if (label->text() == "1.9.6 BETA")
+        {
+            hasSidebarReleaseVersion = true;
+            break;
+        }
+    }
     auto* headerTitle = window.findChild<QLabel*>("headerTitle");
     auto* fieldLabel = window.findChild<QLabel*>("telemetryLabel");
     auto* fieldValue = window.findChild<QLabel*>("telemetryValue");
@@ -338,7 +352,7 @@ int main(int argc, char** argv)
         !dashboardItem->property("sidebarNavButton").toBool() ||
         !completedItem->property("sidebarNavButton").toBool() ||
         !settingsItem->property("sidebarNavButton").toBool() ||
-        !brandName || !brandSubtitle || brandSubtitle->wordWrap() ||
+        !brandName || !brandSubtitle || !hasSidebarReleaseVersion || brandSubtitle->wordWrap() ||
         !dashboardItem->property("active").toBool() ||
         completedItem->property("active").toBool() ||
         dashboardScroll->horizontalScrollBarPolicy() != Qt::ScrollBarAlwaysOff ||
@@ -1087,11 +1101,12 @@ int main(int argc, char** argv)
                     }
                     else if (label->text() == "TRAILER")
                     {
-                        hasCapturedTrailer = fieldValue && fieldValue->text() == "OWNED FLATBED";
+                        hasCapturedTrailer = fieldValue &&
+                            fieldValue->text() == "ASSIGNED JOB TRAILER";
                     }
                     else if (label->text() == "TRAILER PLATE")
                     {
-                        hasCapturedTrailerPlate = fieldValue && fieldValue->text() == "OWNED-1";
+                        hasCapturedTrailerPlate = fieldValue && fieldValue->text() == "JOB-9";
                     }
                 }
                 if (label->objectName() == "telemetryValue" &&

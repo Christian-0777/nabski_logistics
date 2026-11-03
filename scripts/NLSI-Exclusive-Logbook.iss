@@ -1,8 +1,8 @@
 ; NLSI Exclusive Logbook installer
-; Product version: 1.9.4 Beta
+; Product version: 1.9.6 Beta
 
 #define MyAppName "NLSI Exclusive Logbook"
-#define MyAppVersion "1.9.4 Beta"
+#define MyAppVersion "1.9.6 Beta"
 #define MyAppPublisher "NABSKI Logistics Solutions Inc."
 #define MyAppExeName "nlsi_dashboard.exe"
 #define PluginFileName "nlsi_scs_plugin.dll"
@@ -15,15 +15,15 @@ AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={code:GetDefaultInstallDir}
 DefaultGroupName={#MyAppName}
-OutputDir=..\releases\1.9.4-beta
-OutputBaseFilename=NLSI-Exclusive-Logbook-v1.9.4-beta-Setup
+OutputDir=..\releases\1.9.6-beta
+OutputBaseFilename=NLSI-Exclusive-Logbook-v1.9.6-beta-Setup
 SetupIconFile=..\resources\nlsi.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
-VersionInfoVersion=1.9.4.0
+VersionInfoVersion=1.9.6.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} Setup - {#MyAppVersion}
 VersionInfoProductName={#MyAppName}
-VersionInfoProductVersion=1.9.4.0
+VersionInfoProductVersion=1.9.6.0
 ArchitecturesAllowed=x64os
 ArchitecturesInstallIn64BitMode=x64os
 PrivilegesRequired=admin
@@ -60,12 +60,13 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: no
 const
   AppUninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{B58E42DA-BC15-4FD0-9DCC-44E4E14D374D}_is1';
   ProductName = 'NLSI Exclusive Logbook';
-  ProductVersion = '1.9.4 Beta';
+  ProductVersion = '1.9.6 Beta';
   ETS2FolderName = 'Euro Truck Simulator 2';
   ATSFolderName = 'American Truck Simulator';
   PluginDllName = 'nlsi_scs_plugin.dll';
   PluginMarkerSuffix = '.nlsi-owner';
-  PluginBackupSuffix = '.nlsi-backup.dll';
+  PluginBackupSuffix = '.nlsi-backup';
+  LegacyPluginBackupSuffix = '.nlsi-backup.dll';
   TikTokProfileUrl = 'https://www.tiktok.com/@nabskiplays';
 
 var
@@ -224,8 +225,11 @@ end;
 function IsRecognizedNLSIMarker(const Marker: String): Boolean;
 begin
   Result :=
+    (Marker = 'NLSI Exclusive Logbook 1.9.6 Beta') or
+    (Marker = 'NLSI Exclusive Logbook 1.9.5 Beta') or
     (Marker = 'NLSI Exclusive Logbook 1.9.4 Beta') or
     (Marker = 'NLSI Exclusive Logbook 1.9.3 Beta') or
+    (Marker = 'NLSI Exclusive Logbook 1.9.2 Beta') or
     (Marker = 'NLSI Exclusive Logbook 1.9.1 Beta') or
     (Marker = 'NLSI Exclusive Logbook 1.9.0 Beta') or
     (Marker = 'NLSI Exclusive Logbook 1.8.9 Beta') or
@@ -253,8 +257,11 @@ begin
     (Marker = 'NLSI Exclusive Logbook 1.6.7 Beta') or
     (Marker = 'NLSI Exclusive Logbook 1.6.6 Beta') or
     (Marker = 'NLSI Exclusive Logbook 1.6.5 Beta') or
+    (Pos('NLSI Exclusive Logbook 1.9.6 Beta|', Marker) = 1) or
+    (Pos('NLSI Exclusive Logbook 1.9.5 Beta|', Marker) = 1) or
     (Pos('NLSI Exclusive Logbook 1.9.4 Beta|', Marker) = 1) or
     (Pos('NLSI Exclusive Logbook 1.9.3 Beta|', Marker) = 1) or
+    (Pos('NLSI Exclusive Logbook 1.9.2 Beta|', Marker) = 1) or
     (Pos('NLSI Exclusive Logbook 1.9.1 Beta|', Marker) = 1) or
     (Pos('NLSI Exclusive Logbook 1.9.0 Beta|', Marker) = 1) or
     (Pos('NLSI Exclusive Logbook 1.8.9 Beta|', Marker) = 1) or
@@ -499,6 +506,43 @@ begin
   Result := True;
 end;
 
+function MigrateLegacyPluginBackup(const TargetFile: String): Boolean;
+var
+  LegacyBackupFile: String;
+  BackupFile: String;
+  QuarantinedFile: String;
+  LegacyHash: String;
+  BackupHash: String;
+begin
+  Result := True;
+  LegacyBackupFile := TargetFile + LegacyPluginBackupSuffix;
+  if not FileExists(LegacyBackupFile) then
+    Exit;
+
+  BackupFile := TargetFile + PluginBackupSuffix;
+  if not FileExists(BackupFile) then
+  begin
+    Result := RenameFile(LegacyBackupFile, BackupFile);
+    Exit;
+  end;
+
+  LegacyHash := GetSHA256OfFile(LegacyBackupFile);
+  BackupHash := GetSHA256OfFile(BackupFile);
+  if (LegacyHash <> '') and (CompareText(LegacyHash, BackupHash) = 0) then
+  begin
+    Result := DeleteFile(LegacyBackupFile);
+    Exit;
+  end;
+
+  QuarantinedFile := TargetFile + '.nlsi-backup-legacy';
+  if FileExists(QuarantinedFile) then
+  begin
+    Result := False;
+    Exit;
+  end;
+  Result := RenameFile(LegacyBackupFile, QuarantinedFile);
+end;
+
 function PreparePluginTarget(const TargetFile: String; const ArchitectureDirectory: String): Boolean;
 var
   BackupFile: String;
@@ -509,6 +553,8 @@ begin
   if not ForceDirectories(ExtractFileDir(TargetFile)) then
     Exit;
   if not PluginCanBeReplaced(TargetFile) then
+    Exit;
+  if not MigrateLegacyPluginBackup(TargetFile) then
     Exit;
   if FileExists(TargetFile) then
   begin
@@ -607,6 +653,8 @@ begin
   Separator := Pos('|', Marker);
   ExpectedHash := Copy(Marker, Separator + 1, Length(Marker));
   BackupFile := TargetFile + PluginBackupSuffix;
+  if not FileExists(BackupFile) then
+    BackupFile := TargetFile + LegacyPluginBackupSuffix;
   if not FileExists(TargetFile) or
      (CompareText(GetSHA256OfFile(TargetFile), ExpectedHash) = 0) then
   begin

@@ -56,8 +56,8 @@ installer, every staged payload file, and the release documents:
 powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1
 ```
 
-The NLSI Exclusive Logbook v1.9.4 Beta installer is written to
-`releases\1.9.4-beta\NLSI-Exclusive-Logbook-v1.9.4-beta-Setup.exe` and
+The current NLSI Exclusive Logbook v1.9.6 Beta installer is written to
+`releases\1.9.6-beta\NLSI-Exclusive-Logbook-v1.9.6-beta-Setup.exe` and
 defaults to `C:\Program Files\Nabski Logistics Solutions Inc`. It uses the
 stable Inno Setup AppId for updates, reuses a valid previous install location,
 closes the dashboard through Windows Restart Manager, and leaves files not
@@ -84,11 +84,12 @@ the 32-bit DLL does not link against the dashboard's x64 Qt libraries.
 Both plugin DLLs use the static MSVC runtime and are checked for imports,
 architecture, and the required SCS exports before packaging.
 
-The installer places the release notes and installation guide in its `docs`
-subdirectory. The same documents are also kept beside the installer, and their
-SHA-256 values are written to `manifest.sha256`. The final installer, staged
-payload, release documents, and SHA-256 manifest are kept under
-`releases\1.9.4-beta`. The plugin communicates with the
+The v1.9.6 Beta release directory contains the installer, staged payload,
+SHA-256 manifest, build report, test report, and DLL replacement verification
+report under `releases\1.9.6-beta`. The release documentation is maintained in
+the repository's `docs` directory. See
+`docs\INSTALLATION-v1.9.6-beta.md` for the tested installer upgrade behavior.
+The plugin communicates with the
 dashboard over the local Windows named pipe `\\.\pipe\nlsi_scs_telemetry`. The
 dashboard listens through Qt LocalServer. Completed job history, the active
 recovery record, and the monotonic ID sequence are stored locally in the

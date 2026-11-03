@@ -126,6 +126,54 @@ bool sameSnapshot(const TelemetrySnapshot& left, const TelemetrySnapshot& right)
     return encodeTelemetryFrame(left) == encodeTelemetryFrame(right);
 }
 
+bool isTrailerField(const std::string& key)
+{
+    return key.compare(0, 8, "trailer.") == 0;
+}
+
+bool hasValidTrailerFields(const TelemetrySnapshot& snapshot)
+{
+    for (const auto& field : snapshot.values)
+    {
+        if (field.first.compare(0, 8, "trailer.") == 0 &&
+            field.first != "trailer.connected" &&
+            field.second.available && !trimString(field.second.value).empty())
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool trailerIsDetached(const TelemetrySnapshot& snapshot)
+{
+    const auto connected = snapshot.values.find("trailer.connected");
+    if (connected == snapshot.values.end() || !connected->second.available)
+    {
+        return false;
+    }
+    const std::string value = trimString(connected->second.value);
+    if (value != "false" && value != "0")
+    {
+        return false;
+    }
+    return !hasValidTrailerFields(snapshot);
+}
+
+void clearTrailerDetails(TelemetrySnapshot& snapshot)
+{
+    for (auto& field : snapshot.values)
+    {
+        if (isTrailerField(field.first) && field.first != "trailer.connected")
+        {
+            field.second.value.clear();
+            field.second.available = false;
+        }
+    }
+    snapshot.values["trailer.details"] = {"Trailers", "", "", false};
+    snapshot.values["trailer.license_plate"] = {"Trailer Plate", "", "", false};
+}
+
 } // namespace
 
 JobHistory::JobHistory(QString directory)
@@ -270,7 +318,7 @@ bool JobHistory::processSnapshot(const TelemetrySnapshot& snapshot, const QDateT
         {
             for (auto it = jobSnapshot.values.begin(); it != jobSnapshot.values.end();)
             {
-                if (it->first.compare(0, 8, "trailer.") == 0)
+                if (isTrailerField(it->first))
                 {
                     it = jobSnapshot.values.erase(it);
                 }
@@ -279,15 +327,43 @@ bool JobHistory::processSnapshot(const TelemetrySnapshot& snapshot, const QDateT
                     ++it;
                 }
             }
-            if (preJobSnapshot)
+            const bool detached = trailerIsDetached(snapshot);
+            if (!detached)
             {
-                for (const auto& field : preJobSnapshot->values)
+                const auto copyAvailableTrailerFields = [&jobSnapshot](
+                    const TelemetrySnapshot& source)
                 {
-                    if (field.first.compare(0, 8, "trailer.") == 0)
+                    for (const auto& field : source.values)
                     {
-                        jobSnapshot.values[field.first] = field.second;
+                        if (isTrailerField(field.first) && field.second.available &&
+                            !trimString(field.second.value).empty())
+                        {
+                            jobSnapshot.values[field.first] = field.second;
+                        }
+                    }
+                };
+                copyAvailableTrailerFields(snapshot);
+                if (preJobSnapshot)
+                {
+                    for (const auto& field : preJobSnapshot->values)
+                    {
+                        if (isTrailerField(field.first) &&
+                            jobSnapshot.values.find(field.first) == jobSnapshot.values.end() &&
+                            field.second.available && !trimString(field.second.value).empty())
+                        {
+                            jobSnapshot.values[field.first] = field.second;
+                        }
                     }
                 }
+            }
+            else
+            {
+                const auto connected = snapshot.values.find("trailer.connected");
+                if (connected != snapshot.values.end())
+                {
+                    jobSnapshot.values["trailer.connected"] = connected->second;
+                }
+                clearTrailerDetails(jobSnapshot);
             }
             if (jobSnapshot.values.find("trailer.details") == jobSnapshot.values.end())
             {
@@ -298,14 +374,13 @@ bool JobHistory::processSnapshot(const TelemetrySnapshot& snapshot, const QDateT
                 jobSnapshot.values["trailer.license_plate"] = {"Trailer Plate", "", "", false};
             }
         }
+        const bool detached = trailerIsDetached(jobSnapshot);
+        if (detached)
+        {
+            clearTrailerDetails(active_->snapshot);
+        }
         for (const auto& field : jobSnapshot.values)
         {
-            if (field.first.compare(0, 8, "trailer.") == 0 &&
-                (!isNewJob ||
-                 active_->snapshot.values.find(field.first) != active_->snapshot.values.end()))
-            {
-                continue;
-            }
             if (field.second.available && !trimString(field.second.value).empty())
             {
                 active_->snapshot.values[field.first] = field.second;
@@ -342,12 +417,12 @@ bool JobHistory::processSnapshot(const TelemetrySnapshot& snapshot, const QDateT
     {
         if (active_)
         {
+            if (trailerIsDetached(snapshot))
+            {
+                clearTrailerDetails(active_->snapshot);
+            }
             for (const auto& field : snapshot.values)
             {
-                if (field.first.compare(0, 8, "trailer.") == 0)
-                {
-                    continue;
-                }
                 if (field.second.available && !trimString(field.second.value).empty())
                 {
                     active_->snapshot.values[field.first] = field.second;
