@@ -25,11 +25,31 @@ NLSI Exclusive Logbook v2.3 Beta expands the logbook to support bus and passenge
 - Preserves completed job records and XP when clearing the inactive current-job display.
 - Keeps the existing truck job workflow and completed-job history.
 
-#### Release and packaging
+#### Release assets and plugin installation
 
-- Removes Completed Job PDF export and its now-exclusive report-generation helper.
-- Updates application and production plugin metadata to FileVersion `2.3.0.0` / ProductVersion `2.3 Beta`.
-- Packages the x64 dashboard, x64/x86 production plugins, required Qt runtime files, and managed-file manifest.
+The v2.3 Beta GitHub release provides these separate assets:
+
+- **`NLSI-Exclusive-Logbook-v2.3-beta-Setup.exe`** — Windows application installer.
+- **`plugin.7z`** — SCS telemetry plugin package containing the plugin DLL files for the supported x64 and x86 game plugin directories.
+
+The installer is intended to deploy the application and its supported game plugins. If game telemetry does not work after installation, manually install the telemetry plugin DLLs from `plugin.7z`:
+
+1. Close NLSI Exclusive Logbook, Euro Truck Simulator 2, and American Truck Simulator if they are running.
+2. Extract `plugin.7z`.
+3. Locate the architecture-specific `nlsi_scs_plugin.dll` files in the extracted package.
+4. For each game you use, copy the **x64** DLL into that game's `bin\\win_x64\\plugins\\` directory.
+5. Copy the **x86** DLL into that game's `bin\\win_x86\\plugins\\` directory.
+6. Create the `plugins` directory if it does not already exist. Do not delete or replace unrelated plugin files.
+7. Start the game and NLSI Exclusive Logbook, then check whether telemetry is received.
+
+Typical game plugin paths:
+
+- **Euro Truck Simulator 2:** `<ETS2 game folder>\\bin\\win_x64\\plugins\\` and `<ETS2 game folder>\\bin\\win_x86\\plugins\\`
+- **American Truck Simulator:** `<ATS game folder>\\bin\\win_x64\\plugins\\` and `<ATS game folder>\\bin\\win_x86\\plugins\\`
+
+Use the DLL matching each folder's architecture. Do not place the x86 DLL in `win_x64` or the x64 DLL in `win_x86`. Install plugins only for games you have installed. The exact folder names and DLLs should be confirmed from the extracted `plugin.7z` package before copying.
+
+If telemetry still does not work after manual installation, verify that the DLLs are in the correct game's plugin directories and that the game and application are fully restarted. Include the game, architecture, application version, and relevant error details when requesting support; do not share credentials or API keys.
 
 This is a working-tree Beta description. It does not by itself confirm that a v2.3 installer has been published or that a GitHub Release has been created. See the v2.3 release-specific notes and installation instructions when those files and artifacts are available.
 
